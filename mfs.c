@@ -140,6 +140,8 @@ int main(int argc, char **argv)
 
     int i;
 
+    init();
+
     while (1)
     {
         // Print out the msh prompt
