@@ -298,7 +298,7 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 
     if ((inode = find_file_by_name(src)) == -1)
     {
-        fprintf(stderr, "retrieve: Error: File not found\n");
+        fprintf(stderr, "retrieve: ERROR: File not found\n");
         return;
     }
 
@@ -306,7 +306,7 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 
     if (!temp)
     {
-        fprintf(stderr, "retrieve: Error: Could not open file `%s' for reading\n", dst);
+        fprintf(stderr, "retrieve: ERROR: Could not open file `%s' for reading\n", dst);
         return;
     }
 
@@ -359,6 +359,18 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
 
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if( !image_open )
+    {
+        printf("ERROR: Disk image is not opened.\n");
+    }
+
+    //verify file exists
+    if( find_file_by_name(tokens[1]) == - 1)
+    {
+        printf("ERROR: No inode matches this filename.\n");
+    }
+    
+    //free space associated
 }
 
 void undel(char *tokens[MAX_NUM_ARGUMENTS])
@@ -466,7 +478,7 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
         // free(cwd);
     }
 
-    fp = fopen(full_path, "w"); // r
+    fp = fopen(full_path, "r"); // r
     if (fp == NULL)
     {
         fprintf(stderr, "File not found\n");
