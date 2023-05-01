@@ -9,7 +9,8 @@
 =======
 #include <sys/types.h>
 #include <sys/stat.h>
->>>>>>> Stashed changes
+    >>>>>>> Stashed changes
+#include <unistd.h>
 #include <unistd.h>
 
 #define BLOCK_SIZE 1024
@@ -29,18 +30,21 @@
 #define MAX_NUM_ARGUMENTS 5
 #define MAX_COMMAND_SIZE 255
 
-uint8_t curr_image[NUM_BLOCKS][BLOCK_SIZE];
+#define ATTRIB_HIDDEN 0x1
+#define ATTRIB_R_ONLY 0x2
+
+    uint8_t curr_image[NUM_BLOCKS][BLOCK_SIZE];
 uint8_t *free_blocks;
 uint8_t *free_inodes;
 
 int32_t findFreeBlock()
 {
     int i;
-    for(i = 0; i < NUM_BLOCKS; i++)
+    for (i = 0; i < NUM_BLOCKS; i++)
     {
-        if(free_inodes[i])
+        if (free_inodes[i])
         {
-            return i+790;
+            return i + 790;
         }
     }
     return -1;
@@ -49,9 +53,9 @@ int32_t findFreeBlock()
 int32_t findFreeInode()
 {
     int i;
-    for(i = 0; i < NUM_FILES; i++)
+    for (i = 0; i < NUM_FILES; i++)
     {
-        if(free_inodes[i])
+        if (free_inodes[i])
         {
             return i;
         }
@@ -62,9 +66,9 @@ int32_t findFreeInode()
 int32_t findFreeInodeBlock(int32_t inode)
 {
     int i;
-    for(i = 0; i < BLOCKS_PER_FILE; i++)
+    for (i = 0; i < BLOCKS_PER_FILE; i++)
     {
-        if(inodes[inode].blocks[i] == -1)
+        if (inodes[inode].blocks[i] == -1)
         {
             return i;
         }
@@ -81,22 +85,17 @@ struct directoryEntry
 
 struct directoryEntry *directory;
 
-FILE* fp;
+FILE *fp;
 char image_name[64];
 uint8_t image_open;
 
 struct inode
 {
-<<<<<<< Updated upstream
+
     int32_t blocks[BLOCKS_PER_FILE];
     bool in_use;
-    uint8_t attrib;
-=======
-    int32_t  blocks[BLOCKS_PER_FILE];
-    bool     in_use;
-    uint8_t  attribute;
-    uint32_t file_size;  
->>>>>>> Stashed changes
+    uint8_t attribute;
+    uint32_t file_size;
 };
 
 struct inode *inodes;
@@ -111,19 +110,35 @@ typedef struct _command
     uint8_t num_args;
 } command;
 
+bool find_file_by_name(char *name)
+{
+    bool found = false;
+
+    for (int i = 0; i < NUM_FILES; ++i)
+    {
+        if (directory[i].in_use && !strncmp(name, directory[i].filename, 64))
+        {
+            found = true;
+            break;
+        }
+    }
+
+    return found;
+}
+
 void init(void)
 {
     directory = (struct directoryEntry *)&curr_image[0][0];
     inodes = (struct inode *)&curr_image[20][0];
 
-    memset( image_name, 0, 64 );
+    memset(image_name, 0, 64);
     image_open = 0;
 
     for (int i = 0; i < NUM_FILES; ++i)
     {
         directory[i].in_use = 0;
-        directory[i].inode  = -1;
-        memset( directory[i].filename, 0, 64 );
+        directory[i].inode = -1;
+        memset(directory[i].filename, 0, 64);
 
         for (int j = 0; j < BLOCKS_PER_FILE; ++j)
         {
@@ -136,115 +151,114 @@ void init(void)
 void insert(char *tokens[MAX_NUM_ARGUMENTS])
 {
     //////////////////////////////////////////
-    //Copy the file into the filesystem image
+    // Copy the file into the filesystem image
     //////////////////////////////////////////
     char *filename = tokens[MAX_NUM_ARGUMENTS];
 
-    //verify that the filename isn't null
-    if(filename == NULL)
+    // verify that the filename isn't null
+    if (filename == NULL)
     {
         printf("Error: file name is NULL\n");
         return;
     }
 
-    //verify the file exists
+    // verify the file exists
     struct stat buf;
-    int ret =  stat(filename, &buf);
-    if(ret == -1)
+    int ret = stat(filename, &buf);
+    if (ret == -1)
     {
         printf("Error: file does not exist.\n");
         return;
     }
 
-    //verify that the file isn't too big
-    if(buf.st_size > MAX_FILE_SIZE)
+    // verify that the file isn't too big
+    if (buf.st_size > MAX_FILE_SIZE)
     {
         printf("Error: file exceeds maximum size.\n");
         return;
     }
 
-    //verify that there is enough space
-    if(buf.st_size > df())
+    // verify that there is enough space
+    if (buf.st_size > df())
     {
         printf("Error: there is not enough space available for a file of this size.\n");
     }
 
-    //find an empty directory entry
+    // find an empty directory entry
     int i;
-    int directory_entry = -1; //initially -1 until we find a valid one
-    for(i = 0; i < NUM_FILES; i++)
+    int directory_entry = -1; // initially -1 until we find a valid one
+    for (i = 0; i < NUM_FILES; i++)
     {
-        if(directory[i].in_use == 0) //then we found one!
+        if (directory[i].in_use == 0) // then we found one!
         {
             directory_entry = i;
             break;
         }
     }
-    if(directory_entry == -1) //then we never found a valid one :(
+    if (directory_entry == -1) // then we never found a valid one :(
     {
         printf("Error: no empty directory entry found.\n");
         return;
     }
-    
-    //open the input file read-only
+
+    // open the input file read-only
     FILE *input_fp = fopen(filename, "r");
     printf("Reading %d bytes from %s.\n", (int)buf.st_size, filename);
 
-    //Save off the size of the input file and initialize index variables to zero
+    // Save off the size of the input file and initialize index variables to zero
     int32_t copy_size = buf.st_size;
 
     int32_t offset = 0;
 
     int32_t block_index = 0;
 
-     //find free inode
+    // find free inode
     int32_t inode_index = findFreeInode();
-    if(inode_index == -1)
-       {
-           printf("Error: could not find a free inode.\n");
-           return;
-       }
+    if (inode_index == -1)
+    {
+        printf("Error: could not find a free inode.\n");
+        return;
+    }
 
-    //place into directory
+    // place into directory
     directory[directory_entry].in_use = 1;
     directory[directory_entry].inode = inode_index;
     strncpy(directory[directory_entry].filename, filename, strlen(filename));
 
-
-    while(copy_size > 0)
+    while (copy_size > 0)
     {
-        fseek(input_fp, offset, SEEK_SET); 
-        
-        //find a free block
+        fseek(input_fp, offset, SEEK_SET);
+
+        // find a free block
         block_index = findFreeBlock();
-        if(block_index == -1)
+        if (block_index == -1)
         {
             printf("Error: no free block found.\n");
             return;
         }
-       
+
         int32_t bytes = fread(curr_image[block_index], BLOCK_SIZE, 1, input_fp);
 
-        //save the block in the inode
+        // save the block in the inode
         int32_t inode_block = findFreeInodeBlock(inode_index);
         inodes[inode_index].blocks[inode_block] = block_index;
 
-        if(bytes == 0 && !feof(input_fp))
+        if (bytes == 0 && !feof(input_fp))
         {
             printf("Error: An error occurred while trying to read from the input file provided.\n");
             return;
         }
 
-        //clear the EOF flag
+        // clear the EOF flag
         clearerr(input_fp);
 
-        //reduce copy_size by the BLOCK_SIZE bytes
+        // reduce copy_size by the BLOCK_SIZE bytes
         copy_size -= BLOCK_SIZE;
 
-        //increment offset
+        // increment offset
         offset += BLOCK_SIZE;
 
-        //increment block array index, not just in file system
+        // increment block array index, not just in file system
         block_index = findFreeBlock();
     }
     fclose(input_fp);
@@ -270,25 +284,12 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
     if (fp == NULL)
     {
         perror("File opening failed");
-        return; 
+        return;
     }
 
-    long start = strtol(tokens[2], NULL, 10); 
-    long num = strtol(tokens[3], NULL, 10); 
-
-    fseek(fp, start, SEEK_SET);
-
-    for (int i = 0; i < num; i++)
-    {
-        int byte = fgetc(fp); 
-        if(byte == EOF)
-        {
-            fprintf(stderr, "Reached end of file\n"); 
-            break; 
-        }
-        printf("%02X\n", byte); 
-    }
-    // fclose(fp); 
+    // TODO: I changed the name to match what it actually does
+    // You have to find the file in the file_system and then print the contents
+    // out in hex
 }
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
@@ -298,15 +299,72 @@ void undel(char *tokens[MAX_NUM_ARGUMENTS])
 }
 void list(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    
+    bool empty = true;
+    bool list_hidden = false, list_attrib = false;
+
+    // Parse options
+    for (int i = 1; i < MAX_NUM_ARGUMENTS && tokens[i] != NULL; ++i)
+    {
+        if (*tokens[i] == '-')
+        {
+            char opt = tokens[i][1];
+            switch (opt)
+            {
+            case 'h':
+                list_hidden = true;
+                break;
+            case 'a':
+                list_attrib = true;
+                break;
+            case '\0':
+                fprintf(stderr, "list: ERROR: missing option parameter");
+                break;
+            default:
+                fprintf(stderr, "list: unrecognized option %c", opt);
+            }
+        }
+    }
+
+    // Very inefficient, I suggest a linked-list structure instead
+    for (int i = 0; i < NUM_FILES; ++i)
+    {
+        if (directory[i].in_use)
+        {
+            struct inode this = inodes[directory[i].inode];
+            if ((this.attrib & ATTRIB_HIDDEN) && !list_hidden)
+            {
+                continue;
+            }
+            char temp[65];
+            char *cpy = directory[i].filename;
+
+            int j = 0;
+            while (*cpy && j < 64)
+            {
+                temp[j++] = *(cpy++);
+            }
+            temp[j] = '\0';
+
+            empty = false;
+            if (list_attrib)
+                printf("%s\t%hhu\n", temp, this.attrib);
+            else
+                printf("%s\n", temp);
+        }
+    }
+
+    if (empty)
+    {
+        printf("list: No files found.\n");
+    }
 }
 uint32_t df()
 {
     int j;
     int count = 0;
-    for(j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
+    for (j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
     {
-        if(free_blocks[j])
+        if (free_blocks[j])
         {
             count++;
         }
@@ -327,17 +385,17 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
         snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
         // free(cwd);
     }
-    
-    fp = fopen(full_path, "w"); //r
+
+    fp = fopen(full_path, "w"); // r
     if (fp == NULL)
     {
         fprintf(stderr, "File not found\n");
         return;
     }
 
-    strncpy( image_name, full_path, strlen(full_path) );
+    strncpy(image_name, full_path, strlen(full_path));
 
-    fread( &curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp );
+    fread(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
 
     image_open = 1;
     // fclose( fp );
@@ -345,19 +403,19 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
 
 void closefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    if( image_open == 0 )
+    if (image_open == 0)
     {
         printf("ERROR: Disk image not open\n");
         return;
     }
 
-    fclose( fp );
+    fclose(fp);
 
     image_open = 0;
-    memset( image_name, 0, 64 );
+    memset(image_name, 0, 64);
 }
 
-//create a new disk image
+// create a new disk image
 void createfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
     fp = fopen(tokens[1], "w");
@@ -367,9 +425,9 @@ void createfs(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    strncpy( image_name, tokens[1], strlen( tokens[1] ));
+    strncpy(image_name, tokens[1], strlen(tokens[1]));
 
-    memset( curr_image, 0, NUM_BLOCKS * BLOCK_SIZE);
+    memset(curr_image, 0, NUM_BLOCKS * BLOCK_SIZE);
 
     image_open = 1;
 
@@ -378,17 +436,17 @@ void createfs(char *tokens[MAX_NUM_ARGUMENTS])
     init();
 }
 
-//saves the disk image if one is currently open
+// saves the disk image if one is currently open
 void savefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    if( image_open == 0 )
+    if (image_open == 0)
     {
         printf("ERROR: Disk image is not open\n");
     }
 
-    fp = fopen( image_name, "w" );
+    fp = fopen(image_name, "w");
 
-    fwrite( &curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp );
+    fwrite(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
 }
 
 void attrib(char *tokens[MAX_NUM_ARGUMENTS])
@@ -500,7 +558,7 @@ int main(int argc, char **argv)
 
         for (i = 0; i < NUM_COMMANDS; ++i)
         {
-            if (! strcmp(cmd, commands[i].name))
+            if (!strcmp(cmd, commands[i].name))
             {
                 if (tokens[commands[i].num_args] == NULL)
                 {
@@ -583,7 +641,8 @@ int main(int argc, char **argv)
     char *command_string = (char *)malloc(MAX_COMMAND_SIZE);
     char *tokens[MAX_NUM_ARGUMENTS] = {NULL};
 
-    init( );
+    init();
+    printf("%ld\n", sizeof(struct directoryEntry));
 
     while (1)
     {
