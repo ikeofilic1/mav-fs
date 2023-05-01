@@ -31,6 +31,8 @@
 #define ATTRIB_HIDDEN 0x1
 #define ATTRIB_R_ONLY 0x2
 
+#define CIPHER_SIZE 256
+
 ///////////////////////////////////////
 // Forward declarations
 //////////////////////////////////////
@@ -653,13 +655,68 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    char *filename = tokens[1];
+    char *cipher = tokens[2];
+
+    if(!image_open){
+        printf("Error: Disk Image not open.\n");
+        return;
+    }
+
     //check that the filename is not null
+    if(filename == NULL)
+    {
+        printf("Error: file not found.\n");
+        return;
+    }
+    
     //check that the file exists
+    FILE *encrypt_fp = fopen(filename, "r+");
+    if(!encrypt_fp)
+    {
+        printf("Error: Could not open file.\n");
+        return;
+    }
     //check that the file is not empty
+    if(feof(encrypt_fp))
+    {
+        printf("Error: file empty, nothing to encrypt.\n");
+        return;
+    }
     //check that the cypher is not NULL
+    if(cipher == NULL)
+    {
+        printf("Error: Cipher is NULL.\n");
+        return;
+    }
     //check that the cypher is the rihgt size
+    if(sizeof(cipher) != CIPHER_SIZE)
+    {
+        printf("Error: Cipher must be 256 bits.\n");
+        return;
+    }
     //open the file XOR 256 byte sized blocks with the cypher, respectively
+    char *encrypted_byte;
+    char *byte_to_encrypt;
+    int32_t encrypt_offset = 0;
+
+    while(!feof(encrypt_fp))
+    {
+        fseek(encrypt_fp, encrypt_offset, SEEK_SET);
+        fread(byte_to_encrypt, CIPHER_SIZE, 1, encrypt_fp);
+        encrypted_byte = (int)byte_to_encrypt ^ (int)cipher;
+
+        fwrite(encrypted_byte, 256, 1, encrypt_fp);
+
+        encrypt_offset += CIPHER_SIZE + 1;
+    }
     //check that the file is not empty/NULL
+    if(encrypted_byte == NULL && byte_to_encrypt == NULL && feof(encrypt_fp))
+    {
+        printf("Error: There was an error encrypting the file.\n");
+    }
+
+    fclose(encrypt_fp);
 }
 
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
