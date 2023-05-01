@@ -240,10 +240,10 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    df(NULL);
+    _set_size_avail();
 
     // verify that there is enough space
-    // size_avail is updated in df()
+    // size_avail is updated above
     if (buf.st_size > size_avail)
     {
         printf("ERROR: there is not enough space for a file of this size.\n");
@@ -538,8 +538,6 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
 // updates global size variable
 void df(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    int j;
-    int count = 0;
     if (!image_open)
     {
         printf("ERROR: Disk Image not opened.\n");
@@ -563,7 +561,7 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
     {
         char *cwd = getcwd(NULL, 0);
         snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
-        // free(cwd);
+        free(cwd);
     }
 
     fp = fopen(full_path, "r"); // r
@@ -573,7 +571,7 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    strncpy(image_name, full_path, strlen(full_path));
+    strncpy(image_name, full_path, sizeof(image_name));
 
     fread(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
 
@@ -628,44 +626,13 @@ void savefs(char *tokens[MAX_NUM_ARGUMENTS])
 
 void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    uint8_t mask = 0;
-
-    char *file = NULL;
-
-    // Parse options
-    for (int i = 1; i < MAX_NUM_ARGUMENTS && tokens[i] != NULL; ++i)
+    if (!image_open)
     {
-        char flag = *tokens[i];
-        if (flag == '-' || flag == '+')
-        {
-            char opt = tokens[i][1];
-            switch (opt)
-            {
-            case 'h':
-                mask |= flag == '-' ? ~(ATTRIB_HIDDEN) : ATTRIB_HIDDEN;
-                break;
-            case 'r':
-                mask |= flag == '-' ? ~(ATTRIB_R_ONLY) : ATTRIB_R_ONLY;
-                break;
-            case '\0':
-                fprintf(stderr, "list: ERROR: missing attribute paramter ('h' or 'r')\n");
-                break;
-            default:
-                fprintf(stderr, "list: unrecognized attribute %c\n", opt);
-            }
-        }
-        else
-        {
-            file = tokens[i];
-        }
-    }
-
-    if (file == NULL)
-    {
-        printf("attrib: Filename not provided\n");
+        printf("Error: Disk Image not open.\n");
         return;
     }
 
+    char *file = tokens[2];
     uint32_t inode;
 
     if ((inode = find_file_by_name(file, NULL)) == -1)
@@ -674,22 +641,39 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    // Upper 6 bits are set (attribute wants to be removed)
-    if (mask & ~(ATTRIB_HIDDEN | ATTRIB_R_ONLY))
+    char flag = tokens[1][0];
+
+    if (flag == '-' || flag == '+')
     {
-        if (mask & (ATTRIB_HIDDEN | ATTRIB_R_ONLY))
+        bool remove = flag == '-';
+        uint8_t mask = 0;
+
+        char opt = tokens[i][1];
+
+        switch (opt)
         {
-            fprintf(stderr, "attrib: ERROR: cannot combine both - and + options\n");
-            return;
+        case 'h':
+            mask = ATTRIB_HIDDEN;
+            break;
+        case 'r':
+            mask = ATTRIB_R_ONLY;
+            break;
+        case '\0':
+            fprintf(stderr, "list: ERROR: missing attribute paramter ('h' or 'r')\n");
+            break;
+        default:
+            fprintf(stderr, "list: unrecognized attribute %c\n", opt);
         }
 
-        // Clear the attribute
-        inodes[inode].attribute &= mask;
+        if (remove)
+            inodes[inode].attribute &= ~mask;
+        else
+            inodes[inode].attribute |= mask;
     }
     else
     {
-        // Set the attribute
-        inodes[inode].attribute |= mask;
+        fprintf(stderr, "list: ERROR: `%s' is not an attribute. Expected attribut\n", tokens[1]);
+        return;
     }
 }
 
@@ -826,7 +810,7 @@ void init()
 {
     directory = (struct directoryEntry *)&curr_image[0][0];
     inodes = (struct inode *)&curr_image[20][0];
-    free_blocks = (uint8_t *)&curr_image[1000][0];
+    free_blocks = (uint8_t *)&curr_image[277][0];
     free_inodes = (uint8_t *)&curr_image[19][0];
 
     image_open = 0;
