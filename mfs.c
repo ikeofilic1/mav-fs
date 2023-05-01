@@ -17,7 +17,7 @@
 #define MAX_FILE_LEN 64
 #define NUM_FILES 256
 
-#define FIRST_DATA_BLOCK 1001
+#define FIRST_DATA_BLOCK 341
 
 #define DISK_IMAGE_SIZE 67108864
 #define NUM_BLOCKS (DISK_IMAGE_SIZE) / (BLOCK_SIZE)
@@ -54,7 +54,7 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS]);
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS]);
 void df(char *tokens[MAX_NUM_ARGUMENTS]);
 
-FILE *fp;
+FILE *fp = NULL;
 
 uint8_t curr_image[NUM_BLOCKS][BLOCK_SIZE];
 
@@ -63,7 +63,7 @@ uint8_t *free_inodes;
 
 uint32_t size_avail;
 uint8_t image_open;
-char image_name[64];
+char image_name[256];
 
 struct directoryEntry
 {
@@ -106,7 +106,7 @@ static const command commands[NUM_COMMANDS] = {
     //  command name	call back	min arguments
 
     {"insert", insert, 1},
-    {"retrieve", retrieve, 2},
+    {"retrieve", retrieve, 1},
     {"read", readfile, 3},
     {"delete", del, 1},
     {"undel", undel, 1},
@@ -125,11 +125,12 @@ static const command commands[NUM_COMMANDS] = {
 int32_t findFreeBlock()
 {
     int i;
-    for (i = 0; i < NUM_BLOCKS - FIRST_DATA_BLOCK; i++)
+    for (i = FIRST_DATA_BLOCK; i < NUM_BLOCKS; i++)
     {
         if (free_blocks[i])
         {
-            return i + FIRST_DATA_BLOCK;
+            free_blocks[i] = 0;
+            return i;
         }
     }
     return -1;
@@ -143,6 +144,8 @@ int32_t findFreeInode()
         if (free_inodes[i])
         {
             assert(!inodes[i].in_use);
+
+            free_inodes[i] = 0;
             return i;
         }
     }
@@ -162,9 +165,9 @@ int32_t findFreeInodeBlock(int32_t inode)
     return -1;
 }
 
-uint32_t find_file_by_name(char *name, uint8_t *dir)
+int32_t find_file_by_name(char *name, uint8_t *dir)
 {
-    uint32_t inode_num = -1;
+    int32_t inode_num = -1;
 
     int i = 0;
     for (; i < NUM_FILES; ++i)
@@ -185,7 +188,7 @@ uint32_t find_file_by_name(char *name, uint8_t *dir)
 void _set_size_avail(void)
 {
     uint32_t count = 0;
-    for (j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
+    for (int j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
     {
         if (free_blocks[j])
         {
@@ -194,6 +197,28 @@ void _set_size_avail(void)
     }
 
     size_avail = count * BLOCK_SIZE;
+}
+
+void xor_file(uint32_t inode, uint8_t cipher)
+{
+    int block_idx = 0;
+
+    while (block_idx < BLOCKS_PER_FILE)
+    {
+        uint32_t block_num = inodes[inode].blocks[block_idx];
+
+        // We have reached the end of the file
+        if (block_num == -1)
+            break;
+
+        // XOR each block
+        for (int i = 0; i < BLOCK_SIZE; ++i)
+        {
+            curr_image[inodes[inode].blocks[block_idx]][i] ^= cipher;
+        }
+
+        block_idx++;
+    }
 }
 
 // copy a file into the disk image
@@ -221,7 +246,8 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     int32_t inode = find_file_by_name(base, NULL);
     if (inode != -1)
     {
-        fprintf(stderr, "ERROR: file already exists");
+        fprintf(stderr, "ERROR: file already exists\n");
+        return;
     }
 
     // verify the file exists
@@ -293,6 +319,8 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     strncpy(directory[directory_entry].filename, base, strlen(base));
 
     inodes[inode_index].file_size = buf.st_size;
+    inodes[inode_index].in_use = 1;
+    memset(inodes[inode_index].blocks, -1, BLOCKS_PER_FILE * sizeof(int32_t));
 
     while (copy_size > 0)
     {
@@ -332,6 +360,12 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
 
 void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if (!image_open)
+    {
+        printf("insert: ERROR: Disk image not open.\n");
+        return;
+    }
+
     char *src = tokens[1];
     char *dst = tokens[2] ? tokens[2] : src;
 
@@ -347,7 +381,7 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 
     if (!temp)
     {
-        fprintf(stderr, "retrieve: Error: Could not open file `%s' for reading\n", dst);
+        fprintf(stderr, "retrieve: Error: Could not open file `%s' for writing\n", dst);
         return;
     }
 
@@ -355,7 +389,7 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
     uint32_t rem = this.file_size;
 
     int i = 0;
-    while (rem > 0)
+    while (rem > 0 && this.blocks[i] != -1)
     {
         uint32_t to_copy = BLOCK_SIZE;
 
@@ -374,28 +408,64 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 
 void readfile(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    char full_path[256];
-    if (tokens[1][0] == '/')
+    if (!image_open)
     {
-        strncpy(full_path, tokens[1], sizeof(full_path));
-    }
-    else
-    {
-        char *cwd = getcwd(NULL, 0);
-        snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
-        free(cwd);
-    }
-
-    fp = fopen(full_path, "r");
-    if (fp == NULL)
-    {
-        printf("ERROR: File opening failed.\n");
+        printf("read: ERROR: Disk image not open.\n");
         return;
     }
 
-    // TODO: I changed the name to match what it actually does
-    // You have to find the file in the file_system and then print the contents
-    // out in hex
+    int32_t inode = find_file_by_name(tokens[1], NULL);
+    if (inode == -1)
+    {
+        printf("read: ERROR: Can not find the file.\n");
+        return;
+    }
+
+    struct inode this = inodes[inode];
+    uint32_t pos = atoi(tokens[2]);
+
+    int i = pos / BLOCK_SIZE;
+    uint16_t offset = pos % BLOCK_SIZE;
+
+    if (this.file_size)
+    {
+        uint32_t print = atoi(tokens[3]);
+
+        if (print + pos > this.file_size)
+            print = this.file_size - pos;
+
+        while (i < BLOCKS_PER_FILE && this.blocks[i] != -1)
+        {
+            uint32_t end = print;
+
+            if (end > BLOCK_SIZE)
+                end = BLOCK_SIZE;
+
+            uint8_t *this_blk = curr_image[this.blocks[i]];
+
+            for (int j = offset; j < end; ++j)
+            {
+                // Some fancy printing
+                if ((j & 0xF) == 0)
+                {
+                    printf("\n%06X: ", pos);
+                    ++pos;
+                }
+                printf("%02X ", this_blk[j]);
+            }
+
+            offset = 0;
+            print -= BLOCK_SIZE;
+
+            ++i;
+        }
+
+        printf("\n");
+    }
+    else
+    {
+        printf("read: File is empty\n");
+    }
 }
 
 void del(char *tokens[MAX_NUM_ARGUMENTS])
@@ -417,15 +487,17 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
 
     // set in use to false
     directory[inode_idx].in_use = 0;
-    inodes[dir_idx].in_use      = 0;
+    inodes[dir_idx].in_use = 0;
 
-    //make space available again
+    // make space available again
     size_avail += inodes[dir_idx].file_size;
 
     // free each block in the file
     for (int i = 0; i < BLOCKS_PER_FILE; i++)
     {
-        free_blocks[inode_idx + i] = 1;
+        if (inodes[inode_idx].blocks[i] == -1)
+            break;
+        free_blocks[inodes[inode_idx].blocks[i]] = 1;
     }
 }
 
@@ -450,7 +522,7 @@ void undel(char *tokens[MAX_NUM_ARGUMENTS])
         }
     }
 
-    if( inode_idx == -1 )
+    if (inode_idx == -1)
     {
         printf("undelete: ERROR: Could not find the file.\n");
         return;
@@ -458,17 +530,20 @@ void undel(char *tokens[MAX_NUM_ARGUMENTS])
 
     dir_idx = i;
 
-    //set the file back to in-use
+    // set the file back to in-use
     directory[dir_idx].in_use = 1;
-    inodes[inode_idx].in_use  = 1;
+    inodes[inode_idx].in_use = 1;
 
-    //reduce size_available by the file_size
+    // reduce size_available by the file_size
     size_avail -= inodes[dir_idx].file_size;
 
     // remove requested file from undeleted blocks
     for (int i = 0; i < BLOCKS_PER_FILE; i++)
     {
-        free_blocks[inode_idx + i] = 0;
+        if (inodes[inode_idx].blocks[i] == -1)
+            break;
+
+        free_blocks[inodes[inode_idx].blocks[i]] = 0;
     }
 }
 
@@ -571,8 +646,11 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    strncpy(image_name, full_path, sizeof(image_name));
+    strncpy(image_name, full_path, sizeof(image_name) - 1);
 
+    printf("Read %s\n", image_name);
+
+    rewind(fp);
     fread(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
 
     image_open = 1;
@@ -587,7 +665,11 @@ void closefs(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    fclose(fp);
+    if (fp)
+    {
+        fclose(fp);
+        fp = NULL;
+    }
 
     image_open = 0;
     memset(image_name, 0, 64);
@@ -621,6 +703,7 @@ void savefs(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
+    rewind(fp);
     fwrite(curr_image, BLOCK_SIZE, NUM_BLOCKS, fp);
 }
 
@@ -648,7 +731,7 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
         bool remove = flag == '-';
         uint8_t mask = 0;
 
-        char opt = tokens[i][1];
+        char opt = tokens[1][1];
 
         switch (opt)
         {
@@ -677,11 +760,10 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
-//TODO
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char *filename = tokens[1];
-    char *cipher = tokens[2];
+    uint8_t cipher = atoi(tokens[2]) & 0xFF;
 
     if (!image_open)
     {
@@ -689,122 +771,22 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    // check that the filename is not null
-    if (filename == NULL)
+    int32_t inode = find_file_by_name(filename, NULL);
+    if (inode == -1)
     {
-        printf("Error: file not found.\n");
+        fprintf(stderr, "encrypt: File not found\n");
         return;
     }
 
-    // check that the file exists
-    FILE *encrypt_fp = fopen(filename, "r+");
-    if (!encrypt_fp)
-    {
-        printf("Error: Could not open file.\n");
-        return;
-    }
-
-    //check that the cypher is not NULL
-    if(cipher == NULL)
-    {
-        printf("Error: Cipher is NULL.\n");
-        fclose(encrypt_fp);
-        return;
-    }
-    //check that the cipher is the right size
-    if(strlen(cipher) != CIPHER_SIZE)
-    {
-        printf("Error: Cipher must be 256 bits.\n");
-        fclose(encrypt_fp);
-        return;
-    }
-
-    // allocate memory for the buffers
-    unsigned char byte_to_encrypt[CIPHER_SIZE];
-    unsigned char encrypted_byte[CIPHER_SIZE];
-    
-    int32_t encrypt_offset = 0;
-
-    // read and encrypt data in 256 byte-sized blocks
-    while(fread(byte_to_encrypt, CIPHER_SIZE, 1, encrypt_fp) == 1)
-    {
-        for(int i = 0; i < CIPHER_SIZE; i++)
-        {
-            encrypted_byte[i] = byte_to_encrypt[i] ^ cipher[i];
-        }
-
-        fseek(encrypt_fp, encrypt_offset, SEEK_SET);
-        fwrite(encrypted_byte, CIPHER_SIZE, 1, encrypt_fp);
-
-        encrypt_offset += CIPHER_SIZE;
-    }
-
-    fclose(encrypt_fp);
+    xor_file(inode, cipher);
 }
 
-
-//TODO
+// TODO
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    // almost identical to encrypt, since its an XOR encryption the same function will decrypt
-    // check that the filename is not null
-    char *filename = tokens[1];
-    char *cipher = tokens[2];
-
-    if (!image_open)
-    {
-        printf("Error: Disk Image not open.\n");
-        return;
-    }
-
-    // check that the file exists
-    FILE *decrypt_fp = fopen(filename, "r+");
-    if (!decrypt_fp)
-    {
-        printf("Error: Could not open file.\n");
-        return;
-    }
-    // check that the file is not empty
-    if (feof(decrypt_fp))
-    {
-        printf("Error: file empty, nothing to decrypt.\n");
-        return;
-    }
-    //check that the cypher is not NULL
-    if(cipher == NULL)
-    {
-        printf("Error: Cipher is NULL.\n");
-        return;
-    }
-    //check that the cypher is the rihgt size
-    if(strlen(cipher) != CIPHER_SIZE)
-    {
-        printf("Error: Cipher must be 256 bits.\n");
-        return;
-    }
-    //open the file XOR 256 byte sized blocks with the cypher, respectively
-    unsigned char encrypted_byte[CIPHER_SIZE];
-    unsigned char decrypted_byte[CIPHER_SIZE];
-    int32_t encrypt_offset = 0;
-
-    while (!feof(decrypt_fp))
-    {
-        fseek(decrypt_fp, encrypt_offset, SEEK_SET);
-        fread(encrypted_byte, CIPHER_SIZE, 1, decrypt_fp);
-
-        for (int i = 0; i < CIPHER_SIZE; i++)
-        {
-            decrypted_byte[i] = encrypted_byte[i] ^ cipher[i];
-        }
-
-        fwrite(decrypted_byte, CIPHER_SIZE, 1, decrypt_fp);
-
-        encrypt_offset += CIPHER_SIZE + 1;
-    }
-
-    fclose(decrypt_fp);
+    // Beauty of XOR ciphers
+    encrypt(tokens);
 }
-
 
 void init()
 {
@@ -815,6 +797,13 @@ void init()
 
     image_open = 0;
     memset(image_name, 0, 64);
+
+    // Set the first 278 blocks to in_use since they are used for metadata
+    memset(free_blocks, 0, FIRST_DATA_BLOCK);
+
+    // Set the rest of the blocks to free since we just started
+    for (int i = FIRST_DATA_BLOCK; i < NUM_BLOCKS; ++i)
+        free_blocks[i] = 1;
 
     // This is the size of blocks 278-65535 in bytes
     size_avail = 66824192;
@@ -949,6 +938,9 @@ int main(int argc, char **argv)
 
     free(command_string);
     free_array(tokens, MAX_NUM_ARGUMENTS);
+
+    if (fp)
+        fclose(fp);
 
     return 0;
 }
