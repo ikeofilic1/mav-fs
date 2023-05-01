@@ -406,6 +406,8 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
     fclose(temp);
 }
 
+//Read a file from virtual file system and output it to the terminal
+//as a Hexadecimal value
 void readfile(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -470,6 +472,9 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
+
+//Delete a file from the file system using call 'delete
+//An error occurs if a read-only file is marked for deletion
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -484,6 +489,12 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
     if (inode_idx == -1)
     {
         printf("delete: ERROR: Can not find the file.\n");
+        return;
+    }
+
+    if( inodes[dir_idx].attribute & ATTRIB_R_ONLY )
+    {
+        printf("delete: ERROR: Can not delete read-only files.\n");
         return;
     }
 
@@ -503,6 +514,7 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
+//undelete a previously deleted file using call 'undel'
 void undel(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -636,6 +648,7 @@ void df(char *tokens[MAX_NUM_ARGUMENTS])
 
 // opens a previously created file system
 // reads whats currently in the image into the FILE* fp
+// set the image to open
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char full_path[256];
@@ -726,6 +739,12 @@ void savefs(char *tokens[MAX_NUM_ARGUMENTS])
         printf("Wrote %d blocks to %s\n", blocks_wrote, image_name);
 }
 
+//add and remove attributes to files in the disk image
+//options are +h,+r to add the 'hidden' and 'read-only' 
+//attributes, respectively
+//-h and -r are used to remove them
+//Hidden files can only be seen when list -h is invoked
+//Read only files can not be deleted
 void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -735,6 +754,11 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
     }
 
     char *file = tokens[2];
+    if(file == NULL)
+    {
+        printf("attrob: ERROR: File name was not read.\n");
+        return;
+    }
     uint32_t inode;
 
     if ((inode = find_file_by_name(file, NULL)) == -1)
@@ -747,7 +771,7 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 
     if (flag == '-' || flag == '+')
     {
-        bool remove = flag == '-';
+        bool remove = (flag == '-');
         uint8_t mask = 0;
 
         char opt = tokens[1][1];
@@ -761,24 +785,30 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
             mask = ATTRIB_R_ONLY;
             break;
         case '\0':
-            fprintf(stderr, "list: ERROR: missing attribute paramter ('h' or 'r')\n");
+            fprintf(stderr, "list: ERROR: missing attribute parameter ('h' or 'r')\n");
             break;
         default:
             fprintf(stderr, "list: unrecognized attribute %c\n", opt);
         }
 
         if (remove)
+        {
             inodes[inode].attribute &= ~mask;
+        }
         else
+        {
             inodes[inode].attribute |= mask;
+        }
     }
     else
     {
-        fprintf(stderr, "ERROR: `%s' is not an attribute. Expected attribute\n", tokens[1]);
+        fprintf(stderr, "list: ERROR: `%s' is not an attribute. Expected attribute\n", tokens[1]);
         return;
     }
 }
 
+
+//Encrypt a file using a 256 bit cypher
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char *filename = tokens[1];
@@ -800,13 +830,18 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
     xor_file(inode, cipher);
 }
 
-// TODO
+//Decrypt encypted cypher
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     // Beauty of XOR ciphers
     encrypt(tokens);
 }
 
+//Initialize the disk image with starting parameters
+//The directory takes the blocks 0-18
+//Block 19 belongs to the free inodes map
+//Blocks 20-277 are reserved for the inodes
+//The rest of the blocks are free blocks to be used by the virtual file system
 void init()
 {
     directory = (struct directoryEntry *)&curr_image[0][0];
