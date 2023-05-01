@@ -15,7 +15,7 @@
 #define MAX_FILE_LEN 64
 #define NUM_FILES 256
 
-#define FIRST_DATA_BLOCK 790
+#define FIRST_DATA_BLOCK 1001
 
 #define DISK_IMAGE_SIZE 67108864
 #define NUM_BLOCKS (DISK_IMAGE_SIZE) / (BLOCK_SIZE)
@@ -33,6 +33,47 @@ uint8_t curr_image[NUM_BLOCKS][BLOCK_SIZE];
 uint8_t *free_blocks;
 uint8_t *free_inodes;
 
+uint32_t size_avail;
+
+int32_t findFreeBlock()
+{
+    int i;
+    for(i = 0; i < NUM_BLOCKS; i++)
+    {
+        if(free_inodes[i])
+        {
+            return i+1001;
+        }
+    }
+    return -1;
+}
+
+int32_t findFreeInode()
+{
+    int i;
+    for(i = 0; i < NUM_FILES; i++)
+    {
+        if(free_inodes[i])
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int32_t findFreeInodeBlock(int32_t inode)
+{
+    int i;
+    for(i = 0; i < BLOCKS_PER_FILE; i++)
+    {
+        if(inodes[inode].blocks[i] == -1)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
 struct directoryEntry
 {
     char filename[64];
@@ -48,11 +89,10 @@ uint8_t image_open;
 
 struct inode
 {
-
-    int32_t blocks[BLOCKS_PER_FILE];
-    bool in_use;
-    uint8_t attribute;
-    uint32_t file_size;
+    int32_t  blocks[BLOCKS_PER_FILE];
+    bool     in_use;
+    uint8_t  attribute;
+    uint32_t file_size;  
 };
 
 struct inode *inodes;
@@ -167,8 +207,8 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    // verify that there is enough space
-    if (buf.st_size > )
+    //verify that there is enough space
+    if(buf.st_size > size_avail)
     {
         printf("Error: there is not enough space available for a file of this size.\n");
     }
@@ -214,7 +254,10 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     directory[directory_entry].inode = inode_index;
     strncpy(directory[directory_entry].filename, filename, strlen(filename));
 
-    while (copy_size > 0)
+    inodes[inode_index].file_size = buf.st_size;
+
+
+    while(copy_size > 0)
     {
         fseek(input_fp, offset, SEEK_SET);
 
@@ -347,7 +390,7 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
         printf("list: No files found.\n");
     }
 }
-void df()
+void df(char *tokens[MAX_NUM_ARGUMENTS])
 {
     int j;
     int count = 0;
@@ -358,7 +401,7 @@ void df()
             count++;
         }
     }
-    printf("Blocks free: %ud", count * BLOCK_SIZE);
+    size_avail =  count * BLOCK_SIZE;
 }
 
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
@@ -481,6 +524,93 @@ static const command commands[NUM_COMMANDS] = {
 //////////////////////////////////////
 void parse_tokens(const char *command_string, char **token);
 void free_array(char **arr, size_t size);
+
+void init()
+{
+    directory = (struct directoryEntry *)&curr_image[0][0];
+    inodes = (struct inode *)&curr_image[20][0];
+
+    free_blocks = (uint8_t *)&curr_image[1000][0];
+    free_inodes = (uint8_t *)&curr_image[19][0];
+
+    for (int i = 0; i < NUM_FILES; ++i)
+    {
+        directory[i].in_use = 0;
+        directory[i].inode = -1;
+        for (int j = 0; j < BLOCKS_PER_FILE; ++j)
+        {
+            inodes[i].blocks[j] = -1;
+            inodes[i].in_use = 0;
+            inodes[i].attribute = 0;
+            inodes[i].file_size = 0;
+        }
+        inodes[i].in_use = 0;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    char *command_string = (char *)malloc(MAX_COMMAND_SIZE);
+    char *tokens[MAX_NUM_ARGUMENTS] = {NULL};
+
+    int i;
+
+    init();
+
+    while (1)
+    {
+        // Print out the msh prompt
+        printf("mfs> ");
+
+        // Read the command from the commandline.  The
+        // maximum command that will be read is MAX_COMMAND_SIZE
+        // This while command will wait here until the user
+        // inputs something since fgets returns NULL when there
+        // is no input
+        while (!fgets(command_string, MAX_COMMAND_SIZE, stdin))
+            ;
+
+        // Ignore blank lines
+        if (*command_string == '\n')
+        {
+            continue;
+        }
+
+        parse_tokens(command_string, tokens);
+
+        char *cmd = tokens[0];
+
+        // Quit if command is 'quit' or 'exit'
+        if (!strcmp(cmd, "quit") || !strcmp(cmd, "exit"))
+        {
+            break;
+        }
+
+        for (i = 0; i < NUM_COMMANDS; ++i)
+        {
+            if (! strcmp(cmd, commands[i].name))
+            {
+                if (tokens[commands[i].num_args] == NULL)
+                {
+                    fprintf(stderr, "%s: Not enough arguments\n", cmd);
+                    break;
+                }
+                commands[i].run(tokens);
+                break;
+            }
+        }
+
+        if (i == NUM_COMMANDS)
+        {
+            fprintf(stderr, "%s: Invalid command `%s'\n", argv[0], cmd);
+        }
+    }
+
+    free(command_string);
+    free_array(tokens, MAX_NUM_ARGUMENTS);
+
+    return 0;
+}
 
 void free_array(char **arr, size_t size)
 {
