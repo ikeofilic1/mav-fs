@@ -31,7 +31,7 @@
 #define ATTRIB_HIDDEN 0x1
 #define ATTRIB_R_ONLY 0x2
 
-#define CIPHER_SIZE 256
+#define CIPHER_SIZE 1
 
 ///////////////////////////////////////
 // Forward declarations
@@ -142,7 +142,7 @@ int32_t findFreeInode()
     {
         if (free_inodes[i])
         {
-            assert( !inodes[i].in_use );
+            assert(!inodes[i].in_use);
             return i;
         }
     }
@@ -182,10 +182,24 @@ uint32_t find_file_by_name(char *name, uint8_t *dir)
     return inode_num;
 }
 
-//copy a file into the disk image
+void _set_size_avail(void)
+{
+    uint32_t count = 0;
+    for (j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
+    {
+        if (free_blocks[j])
+        {
+            count++;
+        }
+    }
+
+    size_avail = count * BLOCK_SIZE;
+}
+
+// copy a file into the disk image
 void insert(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    if( !image_open )
+    if (!image_open)
     {
         printf("insert: ERROR: Disk image not open.\n");
         return;
@@ -198,14 +212,14 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     // I have to only use the basename of the filename since we support only one-level directory
     char *base = basename(filename);
 
-    if (strlen(base) > 64) 
+    if (strlen(base) > 64)
     {
         fprintf(stderr, "insert error: filename too long\n");
         return;
     }
 
     int32_t inode = find_file_by_name(base, NULL);
-    if (inode != -1) 
+    if (inode != -1)
     {
         fprintf(stderr, "ERROR: file already exists");
     }
@@ -225,6 +239,8 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         printf("ERROR: file exceeds maximum size.\n");
         return;
     }
+
+    df(NULL);
 
     // verify that there is enough space
     // size_avail is updated in df()
@@ -302,9 +318,6 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
             return;
         }
 
-        // we just wrote this num bytes to file image so size decreases
-        size_avail -= bytes;
-
         // clear the EOF flag
         clearerr(input_fp);
 
@@ -344,7 +357,7 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
     int i = 0;
     while (rem > 0)
     {
-        uint32_t  to_copy = BLOCK_SIZE;
+        uint32_t to_copy = BLOCK_SIZE;
 
         if (rem < BLOCK_SIZE)
             to_copy = rem;
@@ -352,7 +365,7 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
         assert(i < BLOCKS_PER_FILE);
 
         fwrite(curr_image[this.blocks[i++]], 1, to_copy, temp);
-        
+
         rem -= BLOCK_SIZE;
     }
 
@@ -383,31 +396,30 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
     // TODO: I changed the name to match what it actually does
     // You have to find the file in the file_system and then print the contents
     // out in hex
-    
 }
 
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    if( !image_open )
+    if (!image_open)
     {
         printf("ERROR: Disk image is not opened.\n");
         return;
     }
 
-    //verify file exists
+    // verify file exists
     uint8_t dir_idx;
-    int inode_idx = find_file_by_name( tokens[1], &dir_idx );
-    if( inode_idx == -1 )
+    int inode_idx = find_file_by_name(tokens[1], &dir_idx);
+    if (inode_idx == -1)
     {
         printf("delete: ERROR: Can not find the file.\n");
         return;
     }
 
-    //set in use to false
+    // set in use to false
     directory[inode_idx].in_use = 0;
-    inodes[dir_idx].in_use    = 0;
+    inodes[dir_idx].in_use = 0;
 
-    //free each block in the file
+    // free each block in the file
     for (int i = 0; i < BLOCKS_PER_FILE; i++)
     {
         free_blocks[inode_idx + i] = 1;
@@ -416,7 +428,7 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
 
 void undel(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    if( !image_open )
+    if (!image_open)
     {
         printf("ERROR: Disk image is not opened.\n");
         return;
@@ -424,17 +436,17 @@ void undel(char *tokens[MAX_NUM_ARGUMENTS])
 
     uint8_t dir_idx;
     uint32_t inode_num = find_file_by_name(tokens[1], &dir_idx);
-   
-    if( inode_num == -1 )
+
+    if (inode_num == -1)
     {
         printf("undelete: ERROR: Could not find the file.\n");
     }
-    //set the file back to in-use
+    // set the file back to in-use
     directory[dir_idx].in_use = 1;
-    inodes[inode_num].in_use    = 1;
+    inodes[inode_num].in_use = 1;
 
-    //remove requested file from undeleted blocks
-    for(int i = 0; i < BLOCKS_PER_FILE; i++)
+    // remove requested file from undeleted blocks
+    for (int i = 0; i < BLOCKS_PER_FILE; i++)
     {
         free_blocks[inode_num + i] = 0;
     }
@@ -502,31 +514,24 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
-//Outputs the amount of free space left on the disk image
-//updates global size variable
+// Outputs the amount of free space left on the disk image
+// updates global size variable
 void df(char *tokens[MAX_NUM_ARGUMENTS])
 {
     int j;
     int count = 0;
-    if( !image_open )
+    if (!image_open)
     {
         printf("ERROR: Disk Image not opened.\n");
         return;
     }
-    
-    for (j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
-    {
-        if(free_blocks[j])
-        {
-        count++;
-        }
-    }
-    size_avail = count * BLOCK_SIZE;
+
+    _set_size_avail();
     printf("%d bytes free.\n", size_avail);
 }
 
-//opens a previously created file system
-//reads whats currently in the image into the FILE* fp
+// opens a previously created file system
+// reads whats currently in the image into the FILE* fp
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char full_path[256];
@@ -555,7 +560,7 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
     image_open = 1;
 }
 
-//closes disk image if it is open
+// closes disk image if it is open
 void closefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (image_open == 0)
@@ -668,55 +673,55 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
-
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char *filename = tokens[1];
     char *cipher = tokens[2];
 
-    if(!image_open){
+    if (!image_open)
+    {
         printf("Error: Disk Image not open.\n");
         return;
     }
 
-    //check that the filename is not null
-    if(filename == NULL)
+    // check that the filename is not null
+    if (filename == NULL)
     {
         printf("Error: file not found.\n");
         return;
     }
-    
-    //check that the file exists
+
+    // check that the file exists
     FILE *encrypt_fp = fopen(filename, "r+");
-    if(!encrypt_fp)
+    if (!encrypt_fp)
     {
         printf("Error: Could not open file.\n");
         return;
     }
-    //check that the file is not empty
-    if(feof(encrypt_fp))
+    // check that the file is not empty
+    if (feof(encrypt_fp))
     {
         printf("Error: file empty, nothing to encrypt.\n");
         return;
     }
-    //check that the cypher is not NULL
-    if(cipher == NULL)
+    // check that the cypher is not NULL
+    if (cipher == NULL)
     {
         printf("Error: Cipher is NULL.\n");
         return;
     }
-    //check that the cypher is the rihgt size
-    if(sizeof(cipher) != CIPHER_SIZE)
+    // check that the cypher is the rihgt size
+    if (sizeof(cipher) != CIPHER_SIZE)
     {
         printf("Error: Cipher must be 256 bits.\n");
         return;
     }
-    //open the file XOR 256 byte sized blocks with the cypher, respectively
+    // open the file XOR 256 byte sized blocks with the cypher, respectively
     char *encrypted_byte;
     char *byte_to_encrypt;
     int32_t encrypt_offset = 0;
 
-    while(!feof(encrypt_fp))
+    while (!feof(encrypt_fp))
     {
         fseek(encrypt_fp, encrypt_offset, SEEK_SET);
         fread(byte_to_encrypt, CIPHER_SIZE, 1, encrypt_fp);
@@ -726,8 +731,8 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 
         encrypt_offset += CIPHER_SIZE + 1;
     }
-    //check that the file is not empty/NULL
-    if(encrypted_byte == NULL && byte_to_encrypt == NULL && feof(encrypt_fp))
+    // check that the file is not empty/NULL
+    if (encrypted_byte == NULL && byte_to_encrypt == NULL && feof(encrypt_fp))
     {
         printf("Error: There was an error encrypting the file.\n");
         return;
@@ -738,54 +743,43 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    //almost identical to encrypt, since its an XOR encryption the same function will decrypt
-    //check that the filename is not null
+    // almost identical to encrypt, since its an XOR encryption the same function will decrypt
+    // check that the filename is not null
     char *filename = tokens[1];
     char *cipher = tokens[2];
-    
-    if(!image_open)
+
+    if (!image_open)
     {
         printf("Error: Disk Image not open.\n");
         return;
     }
-    //check that the filename is not null
-    if(filename == NULL)
-    {
-        printf("Error: file not found.\n");
-        return;
-    }
-    
-    //check that the file exists
+
+    // check that the file exists
     FILE *decrypt_fp = fopen(filename, "r+");
-    if(!decrypt_fp)
+    if (!decrypt_fp)
     {
         printf("Error: Could not open file.\n");
         return;
     }
-    //check that the file is not empty
-    if(feof(decrypt_fp))
+    // check that the file is not empty
+    if (feof(decrypt_fp))
     {
         printf("Error: file empty, nothing to decrypt.\n");
         return;
     }
-    //check that the cypher is not NULL
-    if(cipher == NULL)
-    {
-        printf("Error: Cipher is NULL.\n");
-        return;
-    }
-    //check that the cypher is the rihgt size
-    if(sizeof(cipher) != CIPHER_SIZE)
+
+    // check that the cypher is the rihgt size
+    if (sizeof(cipher) != CIPHER_SIZE)
     {
         printf("Error: Cipher must be 256 bits.\n");
         return;
     }
-    //open the file XOR 256 byte sized blocks with the cypher, respectively
+    // open the file XOR 256 byte sized blocks with the cypher, respectively
     char *encrypted_byte;
     char *decrypted_byte;
     int32_t encrypt_offset = 0;
 
-    while(!feof(decrypt_fp))
+    while (!feof(decrypt_fp))
     {
         fseek(decrypt_fp, encrypt_offset, SEEK_SET);
         fread(encrypted_byte, CIPHER_SIZE, 1, decrypt_fp);
@@ -795,8 +789,8 @@ void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 
         encrypt_offset += CIPHER_SIZE + 1;
     }
-    //check that the file is not empty/NULL
-    if(encrypted_byte == NULL && decrypted_byte == NULL && feof(decrypt_fp))
+    // check that the file is not empty/NULL
+    if (encrypted_byte == NULL && decrypted_byte == NULL && feof(decrypt_fp))
     {
         printf("Error: There was an error encrypting the file.\n");
         return;
