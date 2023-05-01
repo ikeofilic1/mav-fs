@@ -92,22 +92,32 @@ void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
 
+// As of now, we only have 14 commands
 #define NUM_COMMANDS 14
-const command commands[NUM_COMMANDS] = {
-    {"insert", insert, 1},
-    {"retrieve", retrieve, 2},
-    {"read", read, 3},
-    {"delete", del, 1},
-    {"undel", undel, 1},
-    {"list", list, 0},
-    {"df", df, 0},
-    {"open", openfs, 1},
-    {"close", closefs, 0},
-    {"createfs", createfs, 1},
-    {"savefs", savefs, 0},
-    {"attrib", attrib, 1},
-    {"encrypt", encrypt, 2},
-    {"decrypt", decrypt, 2}
+
+// We use a table to store and lookup command names and their corresponding functions.
+// Essentially, this is a map/dictionary that is highly modular (compared to a massive\
+// switch statement). Also, if the table decides to grow larger, we can always store the
+// elements in order of their keys (the name field), and use binary search when looking up a
+// command as opposed to linearly scanning the commands table
+
+static const command commands[NUM_COMMANDS] = {
+//  command name	call back	min arguments
+
+    {"insert",		insert, 				1},
+    {"retrieve",	retrieve, 				2},
+    {"read",		read, 					3},
+    {"delete", 		del, 					1},
+    {"undel", 		undel, 					1},
+    {"list", 		list, 					0},
+    {"df", 			df, 					0},
+    {"open", 		openfs, 				1},
+    {"close", 		closefs, 				0},
+    {"createfs", 	createfs, 				1},
+    {"savefs", 		savefs, 				0},
+    {"attrib", 		attrib, 				1},
+    {"encrypt", 	encrypt, 				2},
+    {"decrypt", 	decrypt, 				2},
 };
 
 ///////////////////////////////////////
@@ -116,7 +126,7 @@ const command commands[NUM_COMMANDS] = {
 void parse_tokens(const char *command_string, char **token);
 void free_array(char **arr, size_t size);
 
-void init()
+void init(void)
 {
     directory = (struct directoryEntry *)&curr_image[0][0];
     inodes = (struct inode *)&curr_image[20][0];
@@ -131,70 +141,6 @@ void init()
         }
         inodes[i].in_use = 0;
     }
-}
-
-int main(int argc, char **argv)
-{
-    char *command_string = (char *)malloc(MAX_COMMAND_SIZE);
-    char *tokens[MAX_NUM_ARGUMENTS] = {NULL};
-
-    int i;
-
-    init();
-
-    while (1)
-    {
-        // Print out the msh prompt
-        printf("mfs> ");
-
-        // Read the command from the commandline.  The
-        // maximum command that will be read is MAX_COMMAND_SIZE
-        // This while command will wait here until the user
-        // inputs something since fgets returns NULL when there
-        // is no input
-        while (!fgets(command_string, MAX_COMMAND_SIZE, stdin))
-            ;
-
-        // Ignore blank lines
-        if (*command_string == '\n')
-        {
-            continue;
-        }
-
-        parse_tokens(command_string, tokens);
-
-        char *cmd = tokens[0];
-
-        // Quit if command is 'quit' or 'exit'
-        if (!strcmp(cmd, "quit") || !strcmp(cmd, "exit"))
-        {
-            break;
-        }
-
-        for (i = 0; i < NUM_COMMANDS; ++i)
-        {
-            if (! strcmp(cmd, commands[i].name))
-            {
-                if (tokens[commands[i].num_args] == NULL)
-                {
-                    fprintf(stderr, "%s: Not enough arguments\n", cmd);
-                    break;
-                }
-                commands[i].run(tokens);
-                break;
-            }
-        }
-
-        if (i == NUM_COMMANDS)
-        {
-            fprintf(stderr, "%s: Invalid command `%s'\n", argv[0], cmd);
-        }
-    }
-
-    free(command_string);
-    free_array(tokens, MAX_NUM_ARGUMENTS);
-
-    return 0;
 }
 
 void free_array(char **arr, size_t size)
@@ -248,4 +194,67 @@ void parse_tokens(const char *command_string, char **token)
     }
 
     free(head_ptr);
+}
+
+int main(int argc, char **argv)
+{
+    char *command_string = (char *)malloc(MAX_COMMAND_SIZE);
+    char *tokens[MAX_NUM_ARGUMENTS] = {NULL};
+
+    init();
+
+    while (1)
+    {
+        // Print out the msh prompt
+        printf("mfs> ");
+
+        // Read the command from the commandline.  The
+        // maximum command that will be read is MAX_COMMAND_SIZE
+        // This while command will wait here until the user
+        // inputs something since fgets returns NULL when there
+        // is no input
+        while (!fgets(command_string, MAX_COMMAND_SIZE, stdin))
+            ;
+
+        // Ignore blank lines
+        if (*command_string == '\n')
+        {
+            continue;
+        }
+
+        parse_tokens(command_string, tokens);
+
+        char *cmd = tokens[0];
+
+        // Quit if command is 'quit' or 'exit'
+        if (!strcmp(cmd, "quit") || !strcmp(cmd, "exit"))
+        {
+            break;
+        }
+
+        int i;
+        for (i = 0; i < NUM_COMMANDS; ++i)
+        {
+            if (! strcmp(cmd, commands[i].name))
+            {
+                if (tokens[commands[i].num_args] == NULL)
+                {
+                    fprintf(stderr, "%s: Not enough arguments\n", cmd);
+                    break;
+                }
+                commands[i].run(tokens);
+                break;
+            }
+        }
+
+        if (i == NUM_COMMANDS)
+        {
+            fprintf(stderr, "mfs: Invalid command `%s'\n", cmd);
+        }
+    }
+
+    free(command_string);
+    free_array(tokens, MAX_NUM_ARGUMENTS);
+
+    return 0;
 }
