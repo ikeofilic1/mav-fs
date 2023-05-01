@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <unistd.h>
 
 #define BLOCK_SIZE 1024
 #define BLOCKS_PER_FILE 1024
@@ -186,21 +187,22 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     int ret = stat(filename, &buf);
     if (ret == -1)
     {
-        printf("Error: file does not exist.\n");
+        printf("ERROR: file does not exist.\n");
         return;
     }
 
     // verify that the file isn't too big
     if (buf.st_size > MAX_FILE_SIZE)
     {
-        printf("Error: file exceeds maximum size.\n");
+        printf("ERROR: file exceeds maximum size.\n");
         return;
     }
 
     // verify that there is enough space
+    // size_avail is updated in df()
     if (buf.st_size > size_avail)
     {
-        printf("Error: there is not enough space available for a file of this size.\n");
+        printf("ERROR: there is not enough space for a file of this size.\n");
     }
 
     // find an empty directory entry
@@ -216,7 +218,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     }
     if (directory_entry == -1) // then we never found a valid one :(
     {
-        printf("Error: no empty directory entry found.\n");
+        printf("ERROR: no empty directory entry found.\n");
         return;
     }
 
@@ -224,7 +226,8 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     FILE *input_fp = fopen(filename, "r");
     printf("Reading %d bytes from %s.\n", (int)buf.st_size, filename);
 
-    // Save off the size of the input file and initialize index variables to zero
+    // Save off the size of the input file
+    // and initialize index variables to zero
     int32_t copy_size = buf.st_size;
 
     int32_t offset = 0;
@@ -235,7 +238,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     int32_t inode_index = findFreeInode();
     if (inode_index == -1)
     {
-        printf("Error: could not find a free inode.\n");
+        printf("ERROR: could not find a free inode.\n");
         return;
     }
 
@@ -254,7 +257,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         block_index = findFreeBlock();
         if (block_index == -1)
         {
-            printf("Error: no free block found.\n");
+            printf("ERROR: no free block found.\n");
             return;
         }
 
@@ -266,7 +269,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
 
         if (bytes == 0 && !feof(input_fp))
         {
-            printf("Error: An error occurred while trying to read from the input file provided.\n");
+            printf("ERROR: An error occurred while trying to read from the input file.\n");
             return;
         }
 
@@ -344,7 +347,7 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
     fp = fopen(full_path, "r");
     if (fp == NULL)
     {
-        perror("File opening failed");
+        printf("ERROR: File opening failed.\n");
         return;
     }
 
@@ -423,20 +426,31 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
+//Outputs the amount of free space left on the disk image
+//updates global size variable
 void df(char *tokens[MAX_NUM_ARGUMENTS])
 {
     int j;
     int count = 0;
+    if( !image_open )
+    {
+        printf("ERROR: Disk Image not opened.\n");
+        return;
+    }
+    
     for (j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
     {
-        if (free_blocks[j])
+        if(free_blocks[j])
         {
-            count++;
+        count++;
         }
     }
     size_avail = count * BLOCK_SIZE;
+    printf("%d bytes free.\n", size_avail);
 }
 
+//opens a previously created file system
+//reads whats currently in the image into the FILE* fp
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char full_path[256];
@@ -463,9 +477,9 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
     fread(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
 
     image_open = 1;
-    // fclose( fp );
 }
 
+//closes disk image if it is open
 void closefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (image_open == 0)
@@ -480,7 +494,7 @@ void closefs(char *tokens[MAX_NUM_ARGUMENTS])
     memset(image_name, 0, 64);
 }
 
-// create a new disk image
+// create a new disk image and initialize it
 void createfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
     fp = fopen(tokens[1], "w");
@@ -492,7 +506,6 @@ void createfs(char *tokens[MAX_NUM_ARGUMENTS])
 
     strncpy(image_name, tokens[1], strlen(tokens[1]));
 
-    // fclose(fp);
     printf("File system image created!\n");
 
     init();
@@ -597,7 +610,7 @@ void init()
 {
     directory = (struct directoryEntry *)&curr_image[0][0];
     inodes = (struct inode *)&curr_image[20][0];
-    free_blocks = (uint8_t *)&curr_image[1000][0];
+    free_blocks = (uint8_t *)&curr_image[277][0];
     free_inodes = (uint8_t *)&curr_image[19][0];
 
     memset(image_name, 0, 64);
@@ -607,6 +620,7 @@ void init()
     {
         directory[i].in_use = 0;
         directory[i].inode = -1;
+        free_inodes[i] = 1;
         memset(directory[i].filename, 0, 64);
 
         for (int j = 0; j < BLOCKS_PER_FILE; ++j)
@@ -694,7 +708,7 @@ int main(int argc, char **argv)
             ;
 
         // Ignore blank lines
-        if (*command_string == '\n')
+        if (*command_string == '\n' || command_string[0] == ' ')
         {
             continue;
         }
