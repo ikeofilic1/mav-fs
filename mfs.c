@@ -334,7 +334,7 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 
     if (!temp)
     {
-        fprintf(stderr, "retrieve: ERROR: Could not open file `%s' for writing`\n", dst);
+        fprintf(stderr, "retrieve: Error: Could not open file `%s' for reading\n", dst);
         return;
     }
 
