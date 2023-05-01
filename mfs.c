@@ -5,6 +5,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+<<<<<<< Updated upstream
+=======
+#include <sys/types.h>
+#include <sys/stat.h>
+>>>>>>> Stashed changes
 #include <unistd.h>
 
 #define BLOCK_SIZE 1024
@@ -13,8 +18,11 @@
 #define MAX_FILE_LEN 64
 #define NUM_FILES 256
 
+#define FIRST_DATA_BLOCK 790
+
 #define DISK_IMAGE_SIZE 67108864
 #define NUM_BLOCKS (DISK_IMAGE_SIZE) / (BLOCK_SIZE)
+#define MAX_FILE_SIZE 1048576
 
 // No command has more than 5 arguments in our
 // list of commands
@@ -22,6 +30,47 @@
 #define MAX_COMMAND_SIZE 255
 
 uint8_t curr_image[NUM_BLOCKS][BLOCK_SIZE];
+uint8_t *free_blocks;
+uint8_t *free_inodes;
+
+int32_t findFreeBlock()
+{
+    int i;
+    for(i = 0; i < NUM_BLOCKS; i++)
+    {
+        if(free_inodes[i])
+        {
+            return i+790;
+        }
+    }
+    return -1;
+}
+
+int32_t findFreeInode()
+{
+    int i;
+    for(i = 0; i < NUM_FILES; i++)
+    {
+        if(free_inodes[i])
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int32_t findFreeInodeBlock(int32_t inode)
+{
+    int i;
+    for(i = 0; i < BLOCKS_PER_FILE; i++)
+    {
+        if(inodes[inode].blocks[i] == -1)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
 
 struct directoryEntry
 {
@@ -31,7 +80,6 @@ struct directoryEntry
 };
 
 struct directoryEntry *directory;
-struct inode *inodes;
 
 FILE* fp;
 char image_name[64];
@@ -39,10 +87,19 @@ uint8_t image_open;
 
 struct inode
 {
+<<<<<<< Updated upstream
     int32_t blocks[BLOCKS_PER_FILE];
     bool in_use;
     uint8_t attrib;
+=======
+    int32_t  blocks[BLOCKS_PER_FILE];
+    bool     in_use;
+    uint8_t  attribute;
+    uint32_t file_size;  
+>>>>>>> Stashed changes
 };
+
+struct inode *inodes;
 
 // Command stuff
 typedef void (*command_fn)(char *[MAX_NUM_ARGUMENTS]);
@@ -78,6 +135,119 @@ void init(void)
 
 void insert(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    //////////////////////////////////////////
+    //Copy the file into the filesystem image
+    //////////////////////////////////////////
+    char *filename = tokens[MAX_NUM_ARGUMENTS];
+
+    //verify that the filename isn't null
+    if(filename == NULL)
+    {
+        printf("Error: file name is NULL\n");
+        return;
+    }
+
+    //verify the file exists
+    struct stat buf;
+    int ret =  stat(filename, &buf);
+    if(ret == -1)
+    {
+        printf("Error: file does not exist.\n");
+        return;
+    }
+
+    //verify that the file isn't too big
+    if(buf.st_size > MAX_FILE_SIZE)
+    {
+        printf("Error: file exceeds maximum size.\n");
+        return;
+    }
+
+    //verify that there is enough space
+    if(buf.st_size > df())
+    {
+        printf("Error: there is not enough space available for a file of this size.\n");
+    }
+
+    //find an empty directory entry
+    int i;
+    int directory_entry = -1; //initially -1 until we find a valid one
+    for(i = 0; i < NUM_FILES; i++)
+    {
+        if(directory[i].in_use == 0) //then we found one!
+        {
+            directory_entry = i;
+            break;
+        }
+    }
+    if(directory_entry == -1) //then we never found a valid one :(
+    {
+        printf("Error: no empty directory entry found.\n");
+        return;
+    }
+    
+    //open the input file read-only
+    FILE *input_fp = fopen(filename, "r");
+    printf("Reading %d bytes from %s.\n", (int)buf.st_size, filename);
+
+    //Save off the size of the input file and initialize index variables to zero
+    int32_t copy_size = buf.st_size;
+
+    int32_t offset = 0;
+
+    int32_t block_index = 0;
+
+     //find free inode
+    int32_t inode_index = findFreeInode();
+    if(inode_index == -1)
+       {
+           printf("Error: could not find a free inode.\n");
+           return;
+       }
+
+    //place into directory
+    directory[directory_entry].in_use = 1;
+    directory[directory_entry].inode = inode_index;
+    strncpy(directory[directory_entry].filename, filename, strlen(filename));
+
+
+    while(copy_size > 0)
+    {
+        fseek(input_fp, offset, SEEK_SET); 
+        
+        //find a free block
+        block_index = findFreeBlock();
+        if(block_index == -1)
+        {
+            printf("Error: no free block found.\n");
+            return;
+        }
+       
+        int32_t bytes = fread(curr_image[block_index], BLOCK_SIZE, 1, input_fp);
+
+        //save the block in the inode
+        int32_t inode_block = findFreeInodeBlock(inode_index);
+        inodes[inode_index].blocks[inode_block] = block_index;
+
+        if(bytes == 0 && !feof(input_fp))
+        {
+            printf("Error: An error occurred while trying to read from the input file provided.\n");
+            return;
+        }
+
+        //clear the EOF flag
+        clearerr(input_fp);
+
+        //reduce copy_size by the BLOCK_SIZE bytes
+        copy_size -= BLOCK_SIZE;
+
+        //increment offset
+        offset += BLOCK_SIZE;
+
+        //increment block array index, not just in file system
+        block_index = findFreeBlock();
+    }
+    fclose(input_fp);
 }
 void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 {
@@ -130,8 +300,18 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
 {
     
 }
-void df(char *tokens[MAX_NUM_ARGUMENTS])
+uint32_t df()
 {
+    int j;
+    int count = 0;
+    for(j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
+    {
+        if(free_blocks[j])
+        {
+            count++;
+        }
+    }
+    return count * BLOCK_SIZE;
 }
 
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
@@ -255,6 +435,96 @@ static const command commands[NUM_COMMANDS] = {
 void parse_tokens(const char *command_string, char **token);
 void free_array(char **arr, size_t size);
 
+<<<<<<< Updated upstream
+=======
+void init()
+{
+    directory = (struct directoryEntry *)&curr_image[0][0];
+    inodes = (struct inode *)&curr_image[20][0];
+
+    free_blocks = (uint8_t *)&curr_image[277][0];
+    free_inodes = (uint8_t *)&curr_image[19][0];
+
+    for (int i = 0; i < NUM_FILES; ++i)
+    {
+        directory[i].in_use = 0;
+        directory[i].inode = -1;
+        for (int j = 0; j < BLOCKS_PER_FILE; ++j)
+        {
+            inodes[i].blocks[j] = -1;
+            inodes[i].in_use = 0;
+            inodes[i].attribute = 0;
+            inodes[i].file_size = 0;
+        }
+        inodes[i].in_use = 0;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    char *command_string = (char *)malloc(MAX_COMMAND_SIZE);
+    char *tokens[MAX_NUM_ARGUMENTS] = {NULL};
+
+    int i;
+
+    init();
+
+    while (1)
+    {
+        // Print out the msh prompt
+        printf("mfs> ");
+
+        // Read the command from the commandline.  The
+        // maximum command that will be read is MAX_COMMAND_SIZE
+        // This while command will wait here until the user
+        // inputs something since fgets returns NULL when there
+        // is no input
+        while (!fgets(command_string, MAX_COMMAND_SIZE, stdin))
+            ;
+
+        // Ignore blank lines
+        if (*command_string == '\n')
+        {
+            continue;
+        }
+
+        parse_tokens(command_string, tokens);
+
+        char *cmd = tokens[0];
+
+        // Quit if command is 'quit' or 'exit'
+        if (!strcmp(cmd, "quit") || !strcmp(cmd, "exit"))
+        {
+            break;
+        }
+
+        for (i = 0; i < NUM_COMMANDS; ++i)
+        {
+            if (! strcmp(cmd, commands[i].name))
+            {
+                if (tokens[commands[i].num_args] == NULL)
+                {
+                    fprintf(stderr, "%s: Not enough arguments\n", cmd);
+                    break;
+                }
+                commands[i].run(tokens);
+                break;
+            }
+        }
+
+        if (i == NUM_COMMANDS)
+        {
+            fprintf(stderr, "%s: Invalid command `%s'\n", argv[0], cmd);
+        }
+    }
+
+    free(command_string);
+    free_array(tokens, MAX_NUM_ARGUMENTS);
+
+    return 0;
+}
+
+>>>>>>> Stashed changes
 void free_array(char **arr, size_t size)
 {
     for (size_t i = 0; i < size; ++i)
