@@ -54,6 +54,28 @@ typedef struct _command
     uint8_t num_args;
 } command;
 
+void init(void)
+{
+    directory = (struct directoryEntry *)&curr_image[0][0];
+    inodes = (struct inode *)&curr_image[20][0];
+
+    memset( image_name, 0, 64 );
+    image_open = 0;
+
+    for (int i = 0; i < NUM_FILES; ++i)
+    {
+        directory[i].in_use = 0;
+        directory[i].inode  = -1;
+        memset( directory[i].filename, 0, 64 );
+
+        for (int j = 0; j < BLOCKS_PER_FILE; ++j)
+        {
+            inodes[i].blocks[j] = -1;
+        }
+        inodes[i].in_use = 0;
+    }
+}
+
 void insert(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
@@ -155,6 +177,7 @@ void closefs(char *tokens[MAX_NUM_ARGUMENTS])
     memset( image_name, 0, 64 );
 }
 
+//create a new disk image
 void createfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
     fp = fopen(tokens[1], "w");
@@ -171,7 +194,8 @@ void createfs(char *tokens[MAX_NUM_ARGUMENTS])
     image_open = 1;
 
     // fclose(fp);
-    printf("File system image created!\n"); 
+    printf("File system image created!\n");
+    init();
 }
 
 //saves the disk image if one is currently open
@@ -230,28 +254,6 @@ static const command commands[NUM_COMMANDS] = {
 //////////////////////////////////////
 void parse_tokens(const char *command_string, char **token);
 void free_array(char **arr, size_t size);
-
-void init(void)
-{
-    directory = (struct directoryEntry *)&curr_image[0][0];
-    inodes = (struct inode *)&curr_image[20][0];
-
-    memset( image_name, 0, 64 );
-    image_open = 0;
-
-    for (int i = 0; i < NUM_FILES; ++i)
-    {
-        directory[i].in_use = 0;
-        directory[i].inode  = -1;
-        memset( directory[i].filename, 0, 64 );
-
-        for (int j = 0; j < BLOCKS_PER_FILE; ++j)
-        {
-            inodes[i].blocks[j] = -1;
-        }
-        inodes[i].in_use = 0;
-    }
-}
 
 void free_array(char **arr, size_t size)
 {
