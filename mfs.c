@@ -48,15 +48,54 @@ typedef struct _command
     uint8_t num_args;
 } command;
 
-// Add the commands here!
 void insert(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
 void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
-void read(char *tokens[MAX_NUM_ARGUMENTS])
+void readfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if (tokens[1] == NULL || tokens[2] == NULL || tokens[3] == NULL)
+    {
+        fprintf(stderr, "Not enough parameters\n");
+    }
+    
+    char full_path[256];
+    if (tokens[1][0] == '/')
+    {
+        strncpy(full_path, tokens[1], sizeof(full_path));
+    }
+    else
+    {
+        char *cwd = getcwd(NULL, 0);
+        snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
+        free(cwd);
+    }
+
+    FILE *fs_file = fopen(full_path, "r");
+    if (fs_file == NULL)
+    {
+        perror("File opening failed");
+        return; 
+    }
+
+    long start = strtol(tokens[2], NULL, 10); 
+    long num = strtol(tokens[3], NULL, 10); 
+
+    fseek(fs_file, start, SEEK_SET);
+
+    for (int i = 0; i < num; i++)
+    {
+        int byte = fgetc(fs_file); 
+        if(byte == EOF)
+        {
+            fprintf(stderr, "Reached end of file\n"); 
+            break; 
+        }
+        printf("%02X\n", byte); 
+    }
+    fclose(fs_file); 
 }
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
@@ -72,12 +111,51 @@ void df(char *tokens[MAX_NUM_ARGUMENTS])
 }
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if (tokens[1] == NULL)
+    {
+        fprintf(stderr, "Filename not provided\n");
+        return; 
+    }
+
+    char full_path[256];
+    if (tokens[1][0] == '/')
+    {
+        strncpy(full_path, tokens[1], sizeof(full_path));
+    }
+    else
+    {
+        char *cwd = getcwd(NULL, 0);
+        snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
+        free(cwd);
+    }
+    
+    FILE *fs_file = fopen(full_path, "r");
+    if (fs_file == NULL)
+    {
+        fprintf(stderr, "File not found\n");
+        return; 
+    }
+    fclose(fs_file);
 }
 void closefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
 void createfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if (tokens[1] == NULL)
+    {
+        fprintf(stderr, "Filename not provided\n");
+        return; 
+    }
+
+    FILE *fs_file = fopen(tokens[1], "w");
+    if (fs_file == NULL)
+    {
+        fprintf(stderr, "Failed to create file");
+        return; 
+    }
+    fclose(fs_file);
+    printf("File system image created!\n"); 
 }
 void savefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
@@ -106,7 +184,7 @@ static const command commands[NUM_COMMANDS] = {
 
     {"insert",		insert, 				1},
     {"retrieve",	retrieve, 				2},
-    {"read",		read, 					3},
+    {"read",		readfs, 				3},
     {"delete", 		del, 					1},
     {"undel", 		undel, 					1},
     {"list", 		list, 					0},
