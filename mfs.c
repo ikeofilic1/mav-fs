@@ -652,10 +652,25 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    //check that the filename is not null
+    //check that the file exists
+    //check that the file is not empty
+    //check that the cypher is not NULL
+    //check that the cypher is the rihgt size
+    //open the file XOR 256 byte sized blocks with the cypher, respectively
+    //check that the file is not empty/NULL
 }
 
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    //almost identical to encrypt, since its an XOR encryption the same function will decrypt
+    //check that the filename is not null
+    //check that the file exists
+    //check that the file is not empty
+    //check that the cypher is not NULL
+    //check that the cypher is the right size
+    //open the file and XOR 256 byte sized blocks with the cypher respectively
+    //check that the file is not empty/NULL
 }
 
 void init()
