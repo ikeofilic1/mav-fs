@@ -17,7 +17,8 @@
 #define MAX_FILE_LEN 64
 #define NUM_FILES 256
 
-#define FIRST_DATA_BLOCK 1001
+// 277 + ceil(65535/1024) + 1
+#define FIRST_DATA_BLOCK 342
 
 #define DISK_IMAGE_SIZE 67108864
 #define NUM_BLOCKS (DISK_IMAGE_SIZE) / (BLOCK_SIZE)
@@ -123,11 +124,11 @@ static const command commands[NUM_COMMANDS] = {
 int32_t findFreeBlock()
 {
     int i;
-    for (i = 0; i < NUM_BLOCKS; i++)
+    for (i = 0; i < NUM_BLOCKS - FIRST_DATA_BLOCK; i++)
     {
         if (free_inodes[i])
         {
-            return i + 1001;
+            return i + FIRST_DATA_BLOCK;
         }
     }
     return -1;
@@ -203,6 +204,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     if (buf.st_size > size_avail)
     {
         printf("ERROR: there is not enough space for a file of this size.\n");
+        return;
     }
 
     // find an empty directory entry
@@ -273,6 +275,8 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
             return;
         }
 
+        size_avail -= bytes;
+
         // clear the EOF flag
         clearerr(input_fp);
 
@@ -281,9 +285,6 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
 
         // increment offset
         offset += BLOCK_SIZE;
-
-        // increment block array index, not just in file system
-        block_index = findFreeBlock();
     }
     fclose(input_fp);
 }
@@ -576,14 +577,9 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
     // Upper 6 bits are set (attribute wants to be removed)
     if (mask & ~(ATTRIB_HIDDEN | ATTRIB_R_ONLY))
     {
-        if (mask & ATTRIB_HIDDEN)
+        if (mask & (ATTRIB_HIDDEN | ATTRIB_R_ONLY))
         {
-            fprintf(stderr, "attrib: ERROR: cannot combine both -h and +h options\n");
-            return;
-        }
-        else if (mask & ATTRIB_R_ONLY)
-        {
-            fprintf(stderr, "attrib: ERROR: cannot combine both -r and +r options\n");
+            fprintf(stderr, "attrib: ERROR: cannot combine both - and + options\n");
             return;
         }
 
@@ -613,8 +609,11 @@ void init()
     free_blocks = (uint8_t *)&curr_image[277][0];
     free_inodes = (uint8_t *)&curr_image[19][0];
 
-    memset(image_name, 0, 64);
     image_open = 0;
+    memset(image_name, 0, 64);
+
+    // This is the size of blocks 278-65535 in bytes
+    size_avail = 66824192;
 
     for (int i = 0; i < NUM_FILES; ++i)
     {
