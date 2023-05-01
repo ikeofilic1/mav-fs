@@ -405,7 +405,10 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
 
     //set in use to false
     directory[inode_idx].in_use = 0;
-    inodes[dir_idx].in_use    = 0;
+    inodes[dir_idx].in_use      = 0;
+
+    //make space available again
+    size_avail += inodes[dir_idx].file_size;
 
     //free each block in the file
     for (int i = 0; i < BLOCKS_PER_FILE; i++)
@@ -423,20 +426,37 @@ void undel(char *tokens[MAX_NUM_ARGUMENTS])
     }
 
     uint8_t dir_idx;
-    uint32_t inode_num = find_file_by_name(tokens[1], &dir_idx);
-   
-    if( inode_num == -1 )
+    uint32_t inode_idx = -1;
+
+    int i = 0;
+    for (; i < NUM_FILES; ++i)
+    {
+        if (!directory[i].in_use && !strncmp(tokens[1], directory[i].filename, 64))
+        {
+            inode_idx = directory[i].inode;
+            break;
+        }
+    }
+
+    if( inode_idx == -1 )
     {
         printf("undelete: ERROR: Could not find the file.\n");
+        return;
     }
+
+    dir_idx = i;
+
     //set the file back to in-use
     directory[dir_idx].in_use = 1;
-    inodes[inode_num].in_use    = 1;
+    inodes[inode_idx].in_use  = 1;
+
+    //reduce size_available by the file_size
+    size_avail -= inodes[dir_idx].file_size;
 
     //remove requested file from undeleted blocks
     for(int i = 0; i < BLOCKS_PER_FILE; i++)
     {
-        free_blocks[inode_num + i] = 0;
+        free_blocks[inode_idx + i] = 0;
     }
 }
 
@@ -693,48 +713,45 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
         printf("Error: Could not open file.\n");
         return;
     }
-    //check that the file is not empty
-    if(feof(encrypt_fp))
-    {
-        printf("Error: file empty, nothing to encrypt.\n");
-        return;
-    }
+
     //check that the cypher is not NULL
     if(cipher == NULL)
     {
         printf("Error: Cipher is NULL.\n");
+        fclose(encrypt_fp);
         return;
     }
-    //check that the cypher is the rihgt size
-    if(sizeof(cipher) != CIPHER_SIZE)
+    //check that the cipher is the right size
+    if(strlen(cipher) != CIPHER_SIZE)
     {
         printf("Error: Cipher must be 256 bits.\n");
+        fclose(encrypt_fp);
         return;
     }
-    //open the file XOR 256 byte sized blocks with the cypher, respectively
-    char *encrypted_byte;
-    char *byte_to_encrypt;
+
+    // allocate memory for the buffers
+    unsigned char byte_to_encrypt[CIPHER_SIZE];
+    unsigned char encrypted_byte[CIPHER_SIZE];
+    
     int32_t encrypt_offset = 0;
 
-    while(!feof(encrypt_fp))
+    // read and encrypt data in 256 byte-sized blocks
+    while(fread(byte_to_encrypt, CIPHER_SIZE, 1, encrypt_fp) == 1)
     {
+        for(int i = 0; i < CIPHER_SIZE; i++)
+        {
+            encrypted_byte[i] = byte_to_encrypt[i] ^ cipher[i];
+        }
+
         fseek(encrypt_fp, encrypt_offset, SEEK_SET);
-        fread(byte_to_encrypt, CIPHER_SIZE, 1, encrypt_fp);
-        encrypted_byte = (int)byte_to_encrypt ^ (int)cipher;
+        fwrite(encrypted_byte, CIPHER_SIZE, 1, encrypt_fp);
 
-        fwrite(encrypted_byte, 256, 1, encrypt_fp);
-
-        encrypt_offset += CIPHER_SIZE + 1;
-    }
-    //check that the file is not empty/NULL
-    if(encrypted_byte == NULL && byte_to_encrypt == NULL && feof(encrypt_fp))
-    {
-        printf("Error: There was an error encrypting the file.\n");
-        return;
+        encrypt_offset += CIPHER_SIZE;
     }
 
     fclose(encrypt_fp);
 }
+
 
 //TODO
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
@@ -776,35 +793,34 @@ void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
     //check that the cypher is the rihgt size
-    if(sizeof(cipher) != CIPHER_SIZE)
+    if(strlen(cipher) != CIPHER_SIZE)
     {
         printf("Error: Cipher must be 256 bits.\n");
         return;
     }
     //open the file XOR 256 byte sized blocks with the cypher, respectively
-    char *encrypted_byte;
-    char *decrypted_byte;
+    unsigned char encrypted_byte[CIPHER_SIZE];
+    unsigned char decrypted_byte[CIPHER_SIZE];
     int32_t encrypt_offset = 0;
 
     while(!feof(decrypt_fp))
     {
         fseek(decrypt_fp, encrypt_offset, SEEK_SET);
         fread(encrypted_byte, CIPHER_SIZE, 1, decrypt_fp);
-        decrypted_byte = (int)encrypted_byte ^ (int)cipher;
 
-        fwrite(encrypted_byte, 256, 1, decrypt_fp);
+        for (int i = 0; i < CIPHER_SIZE; i++)
+        {
+            decrypted_byte[i] = encrypted_byte[i] ^ cipher[i];
+        }
+
+        fwrite(decrypted_byte, CIPHER_SIZE, 1, decrypt_fp);
 
         encrypt_offset += CIPHER_SIZE + 1;
-    }
-    //check that the file is not empty/NULL
-    if(encrypted_byte == NULL && decrypted_byte == NULL && feof(decrypt_fp))
-    {
-        printf("Error: There was an error encrypting the file.\n");
-        return;
     }
 
     fclose(decrypt_fp);
 }
+
 
 void init()
 {
