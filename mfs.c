@@ -668,7 +668,7 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
-
+//TODO
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char *filename = tokens[1];
@@ -736,6 +736,7 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
     fclose(encrypt_fp);
 }
 
+//TODO
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     //almost identical to encrypt, since its an XOR encryption the same function will decrypt
