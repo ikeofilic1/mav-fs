@@ -127,7 +127,7 @@ int32_t findFreeBlock()
     int i;
     for (i = 0; i < NUM_BLOCKS - FIRST_DATA_BLOCK; i++)
     {
-        if (free_inodes[i])
+        if (free_blocks[i])
         {
             return i + FIRST_DATA_BLOCK;
         }
@@ -142,6 +142,7 @@ int32_t findFreeInode()
     {
         if (free_inodes[i])
         {
+            assert( !inodes[i].in_use );
             return i;
         }
     }
@@ -161,11 +162,12 @@ int32_t findFreeInodeBlock(int32_t inode)
     return -1;
 }
 
-uint32_t find_file_by_name(char *name)
+uint32_t find_file_by_name(char *name, uint8_t *dir)
 {
     uint32_t inode_num = -1;
 
-    for (int i = 0; i < NUM_FILES; ++i)
+    int i = 0;
+    for (; i < NUM_FILES; ++i)
     {
         if (directory[i].in_use && !strncmp(name, directory[i].filename, 64))
         {
@@ -173,6 +175,9 @@ uint32_t find_file_by_name(char *name)
             break;
         }
     }
+
+    if (dir)
+        *dir = i;
 
     return inode_num;
 }
@@ -187,6 +192,23 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     }
 
     char *filename = tokens[1];
+
+    // We do not want slashes in our file name though that does not really constitute a problem
+    // At least support adding files from different directory on the host machine to the image
+    // I have to only use the basename of the filename since we support only one-level directory
+    char *base = basename(filename);
+
+    if (strlen(base) > 64) 
+    {
+        fprintf(stderr, "insert error: filename too long\n");
+        return;
+    }
+
+    int32_t inode = find_file_by_name(base, NULL);
+    if (inode != -1) 
+    {
+        fprintf(stderr, "ERROR: file already exists");
+    }
 
     // verify the file exists
     struct stat buf;
@@ -252,7 +274,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     // place into directory
     directory[directory_entry].in_use = 1;
     directory[directory_entry].inode = inode_index;
-    strncpy(directory[directory_entry].filename, filename, strlen(filename));
+    strncpy(directory[directory_entry].filename, base, strlen(base));
 
     inodes[inode_index].file_size = buf.st_size;
 
@@ -280,6 +302,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
             return;
         }
 
+        // we just wrote this num bytes to file image so size decreases
         size_avail -= bytes;
 
         // clear the EOF flag
@@ -299,9 +322,9 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
     char *src = tokens[1];
     char *dst = tokens[2] ? tokens[2] : src;
 
-    uint32_t inode;
+    int32_t inode;
 
-    if ((inode = find_file_by_name(src)) == -1)
+    if ((inode = find_file_by_name(src, NULL)) == -1)
     {
         fprintf(stderr, "retrieve: ERROR: File not found\n");
         return;
@@ -311,7 +334,7 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 
     if (!temp)
     {
-        fprintf(stderr, "retrieve: ERROR: Could not open file `%s' for reading\n", dst);
+        fprintf(stderr, "retrieve: ERROR: Could not open file `%s' for writing`\n", dst);
         return;
     }
 
@@ -372,7 +395,8 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
     }
 
     //verify file exists
-    int inode_idx = find_file_by_name( tokens[1] );
+    uint8_t dir_idx;
+    int inode_idx = find_file_by_name( tokens[1], &dir_idx );
     if( inode_idx == -1 )
     {
         printf("delete: ERROR: Can not find the file.\n");
@@ -381,7 +405,7 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
 
     //set in use to false
     directory[inode_idx].in_use = 0;
-    inodes[inode_idx].in_use    = 0;
+    inodes[dir_idx].in_use    = 0;
 
     //free each block in the file
     for (int i = 0; i < BLOCKS_PER_FILE; i++)
@@ -398,29 +422,21 @@ void undel(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    uint32_t inode_num = -1;
-
-    //if the file is not in use and matches the name desired
-    for (int i = 0; i < NUM_FILES; ++i)
-    {
-        if (!directory[i].in_use && !strncmp(tokens[1], directory[i].filename, 64))
-        {
-            inode_num = directory[i].inode;
-            break;
-        }
-    }
+    uint8_t dir_idx;
+    uint32_t inode_num = find_file_by_name(tokens[1], &dir_idx);
+   
     if( inode_num == -1 )
     {
-        printf("undelete: ERROR: Can not find the file.\n");
+        printf("undelete: ERROR: Could not find the file.\n");
     }
     //set the file back to in-use
-    directory[inode_num].in_use = 1;
+    directory[dir_idx].in_use = 1;
     inodes[inode_num].in_use    = 1;
 
     //remove requested file from undeleted blocks
     for(int i = 0; i < BLOCKS_PER_FILE; i++)
     {
-        free_blocks[inode_num + i] = 1;
+        free_blocks[inode_num + i] = 0;
     }
 }
 
@@ -627,7 +643,7 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 
     uint32_t inode;
 
-    if ((inode = find_file_by_name(file)) == -1)
+    if ((inode = find_file_by_name(file, NULL)) == -1)
     {
         fprintf(stderr, "attrib: File not found\n");
         return;
