@@ -1,3 +1,9 @@
 {
-    "editor.rulers": [80, 100]
+    "editor.rulers": [
+        80,
+        100
+    ],
+    "files.associations": {
+        "*.tcc": "c"
+    }
 }

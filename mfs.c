@@ -17,8 +17,7 @@
 #define MAX_FILE_LEN 64
 #define NUM_FILES 256
 
-// 277 + ceil(65535/1024) + 1
-#define FIRST_DATA_BLOCK 342
+#define FIRST_DATA_BLOCK 1001
 
 #define DISK_IMAGE_SIZE 67108864
 #define NUM_BLOCKS (DISK_IMAGE_SIZE) / (BLOCK_SIZE)
@@ -176,11 +175,15 @@ uint32_t find_file_by_name(char *name)
     return inode_num;
 }
 
+//copy a file into the disk image
 void insert(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    //////////////////////////////////////////
-    // Copy the file into the filesystem image
-    //////////////////////////////////////////
+    if( !image_open )
+    {
+        printf("insert: ERROR: Disk image not open.\n");
+        return;
+    }
+
     char *filename = tokens[1];
 
     // verify the file exists
@@ -362,19 +365,60 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
     if( !image_open )
     {
         printf("ERROR: Disk image is not opened.\n");
+        return;
     }
 
     //verify file exists
-    if( find_file_by_name(tokens[1]) == - 1)
+    int inode_idx = find_file_by_name( tokens[1] );
+    if( inode_idx == -1 )
     {
-        printf("ERROR: No inode matches this filename.\n");
+        printf("delete: ERROR: Can not find the file.\n");
+        return;
     }
-    
-    //free space associated
+
+    //set in use to false
+    directory[inode_idx].in_use = 0;
+    inodes[inode_idx].in_use    = 0;
+
+    //free each block in the file
+    for (int i = 0; i < BLOCKS_PER_FILE; i++)
+    {
+        free_blocks[inode_idx + i] = 1;
+    }
 }
 
 void undel(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if( !image_open )
+    {
+        printf("ERROR: Disk image is not opened.\n");
+        return;
+    }
+
+    uint32_t inode_num = -1;
+
+    //if the file is not in use and matches the name desired
+    for (int i = 0; i < NUM_FILES; ++i)
+    {
+        if (!directory[i].in_use && !strncmp(tokens[1], directory[i].filename, 64))
+        {
+            inode_num = directory[i].inode;
+            break;
+        }
+    }
+    if( inode_num == -1 )
+    {
+        printf("undelete: ERROR: Can not find the file.\n");
+    }
+    //set the file back to in-use
+    directory[inode_num].in_use = 1;
+    inodes[inode_num].in_use    = 1;
+
+    //remove requested file from undeleted blocks
+    for(int i = 0; i < BLOCKS_PER_FILE; i++)
+    {
+        free_blocks[inode_num + i] = 1;
+    }
 }
 
 void list(char *tokens[MAX_NUM_ARGUMENTS])
@@ -618,7 +662,7 @@ void init()
 {
     directory = (struct directoryEntry *)&curr_image[0][0];
     inodes = (struct inode *)&curr_image[20][0];
-    free_blocks = (uint8_t *)&curr_image[277][0];
+    free_blocks = (uint8_t *)&curr_image[1000][0];
     free_inodes = (uint8_t *)&curr_image[19][0];
 
     image_open = 0;
