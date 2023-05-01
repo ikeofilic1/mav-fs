@@ -60,7 +60,7 @@ void readfs(char *tokens[MAX_NUM_ARGUMENTS])
     {
         fprintf(stderr, "Not enough parameters\n");
     }
-    
+
     char full_path[256];
     if (tokens[1][0] == '/')
     {
@@ -77,25 +77,25 @@ void readfs(char *tokens[MAX_NUM_ARGUMENTS])
     if (fs_file == NULL)
     {
         perror("File opening failed");
-        return; 
+        return;
     }
 
-    long start = strtol(tokens[2], NULL, 10); 
-    long num = strtol(tokens[3], NULL, 10); 
+    long start = strtol(tokens[2], NULL, 10);
+    long num = strtol(tokens[3], NULL, 10);
 
     fseek(fs_file, start, SEEK_SET);
 
     for (int i = 0; i < num; i++)
     {
-        int byte = fgetc(fs_file); 
-        if(byte == EOF)
+        int byte = fgetc(fs_file);
+        if (byte == EOF)
         {
-            fprintf(stderr, "Reached end of file\n"); 
-            break; 
+            fprintf(stderr, "Reached end of file\n");
+            break;
         }
-        printf("%02X\n", byte); 
+        printf("%02X\n", byte);
     }
-    fclose(fs_file); 
+    fclose(fs_file);
 }
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
@@ -114,7 +114,7 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
     if (tokens[1] == NULL)
     {
         fprintf(stderr, "Filename not provided\n");
-        return; 
+        return;
     }
 
     char full_path[256];
@@ -128,12 +128,12 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
         snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
         free(cwd);
     }
-    
+
     FILE *fs_file = fopen(full_path, "r");
     if (fs_file == NULL)
     {
         fprintf(stderr, "File not found\n");
-        return; 
+        return;
     }
     fclose(fs_file);
 }
@@ -145,17 +145,31 @@ void createfs(char *tokens[MAX_NUM_ARGUMENTS])
     if (tokens[1] == NULL)
     {
         fprintf(stderr, "Filename not provided\n");
-        return; 
+        return;
     }
 
     FILE *fs_file = fopen(tokens[1], "w");
     if (fs_file == NULL)
     {
         fprintf(stderr, "Failed to create file");
-        return; 
+        return;
     }
     fclose(fs_file);
-    printf("File system image created!\n"); 
+    printf("File system image created!\n");
+    if (tokens[1] == NULL)
+    {
+        fprintf(stderr, "Filename not provided\n");
+        return;
+    }
+
+    FILE *fs_file = fopen(tokens[1], "w");
+    if (fs_file == NULL)
+    {
+        fprintf(stderr, "Failed to create file");
+        return;
+    }
+    fclose(fs_file);
+    printf("File system image created!\n");
 }
 void savefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
@@ -180,22 +194,22 @@ void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 // command as opposed to linearly scanning the commands table
 
 static const command commands[NUM_COMMANDS] = {
-//  command name	call back	min arguments
+    //  command name	call back	min arguments
 
-    {"insert",		insert, 				1},
-    {"retrieve",	retrieve, 				2},
-    {"read",		readfs, 				3},
-    {"delete", 		del, 					1},
-    {"undel", 		undel, 					1},
-    {"list", 		list, 					0},
-    {"df", 			df, 					0},
-    {"open", 		openfs, 				1},
-    {"close", 		closefs, 				0},
-    {"createfs", 	createfs, 				1},
-    {"savefs", 		savefs, 				0},
-    {"attrib", 		attrib, 				1},
-    {"encrypt", 	encrypt, 				2},
-    {"decrypt", 	decrypt, 				2},
+    {"insert", insert, 1},
+    {"retrieve", retrieve, 2},
+    {"read", readfs, 3},
+    {"delete", del, 1},
+    {"undel", undel, 1},
+    {"list", list, 0},
+    {"df", df, 0},
+    {"open", openfs, 1},
+    {"close", closefs, 0},
+    {"createfs", createfs, 1},
+    {"savefs", savefs, 0},
+    {"attrib", attrib, 1},
+    {"encrypt", encrypt, 2},
+    {"decrypt", decrypt, 2},
 };
 
 ///////////////////////////////////////
@@ -313,7 +327,7 @@ int main(int argc, char **argv)
         int i;
         for (i = 0; i < NUM_COMMANDS; ++i)
         {
-            if (! strcmp(cmd, commands[i].name))
+            if (!strcmp(cmd, commands[i].name))
             {
                 if (tokens[commands[i].num_args] == NULL)
                 {
