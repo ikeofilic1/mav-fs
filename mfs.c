@@ -116,7 +116,7 @@ static const command commands[NUM_COMMANDS] = {
     {"close", closefs, 0},
     {"createfs", createfs, 1},
     {"savefs", savefs, 0},
-    {"attrib", attrib, 1},
+    {"attrib", attrib, 2},
     {"encrypt", encrypt, 2},
     {"decrypt", decrypt, 2},
 };
@@ -429,12 +429,14 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
 
     if (this.file_size)
     {
-        uint32_t print = atoi(tokens[3]);
+        int32_t print = atoi(tokens[3]);
 
         if (print + pos > this.file_size)
             print = this.file_size - pos;
 
-        while (i < BLOCKS_PER_FILE && this.blocks[i] != -1)
+        printf("Reading from %d to %d", pos, print);
+
+        while (print > 0 && i < BLOCKS_PER_FILE && this.blocks[i] != -1)
         {
             uint32_t end = print;
 
@@ -449,7 +451,7 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
                 if ((j & 0xF) == 0)
                 {
                     printf("\n%06X: ", pos);
-                    ++pos;
+                    pos += 16;
                 }
                 printf("%02X ", this_blk[j]);
             }
@@ -549,6 +551,12 @@ void undel(char *tokens[MAX_NUM_ARGUMENTS])
 
 void list(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if (!image_open)
+    {
+        printf("ERROR: Disk image is not opened.\n");
+        return;
+    }
+
     bool empty = true;
     bool list_hidden = false, list_attrib = false;
 
@@ -597,7 +605,10 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
 
             empty = false;
             if (list_attrib)
-                printf("%s\t%hhu\n", temp, this.attribute);
+            {
+                int spaces = 66 - strlen(temp);
+                printf("%s%*hhu\n", temp, spaces, this.attribute);
+            }
             else
                 printf("%s\n", temp);
         }
@@ -639,7 +650,7 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
         free(cwd);
     }
 
-    fp = fopen(full_path, "r"); // r
+    fp = fopen(full_path, "r+"); // rw
     if (fp == NULL)
     {
         fprintf(stderr, "File not found\n");
@@ -648,10 +659,10 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
 
     strncpy(image_name, full_path, sizeof(image_name) - 1);
 
-    printf("Read %s\n", image_name);
-
     rewind(fp);
-    fread(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
+    int read = fread(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
+
+    printf("Read %d blocks from %s\n", read, tokens[1]);
 
     image_open = 1;
 }
@@ -685,12 +696,11 @@ void createfs(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
+    init();
+
     strncpy(image_name, tokens[1], strlen(tokens[1]));
 
     printf("File system image created!\n");
-
-    init();
-
     image_open = 1;
 }
 
@@ -703,8 +713,17 @@ void savefs(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
+    assert(fp != NULL);
+
     rewind(fp);
-    fwrite(curr_image, BLOCK_SIZE, NUM_BLOCKS, fp);
+    int blocks_wrote = fwrite(curr_image, BLOCK_SIZE, NUM_BLOCKS, fp);
+
+    if (blocks_wrote == 0 && !feof(fp))
+    {
+        fprintf(stderr, "Error, could not write disk image to file\n");
+    }
+    else
+        printf("Wrote %d blocks to %s\n", blocks_wrote, image_name);
 }
 
 void attrib(char *tokens[MAX_NUM_ARGUMENTS])
@@ -755,7 +774,7 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
     }
     else
     {
-        fprintf(stderr, "list: ERROR: `%s' is not an attribute. Expected attribut\n", tokens[1]);
+        fprintf(stderr, "ERROR: `%s' is not an attribute. Expected attribute\n", tokens[1]);
         return;
     }
 }
@@ -818,11 +837,10 @@ void init()
         for (int j = 0; j < BLOCKS_PER_FILE; ++j)
         {
             inodes[i].blocks[j] = -1;
-            inodes[i].in_use = 0;
-            inodes[i].attribute = 0;
-            inodes[i].file_size = 0;
         }
         inodes[i].in_use = 0;
+        inodes[i].attribute = 0;
+        inodes[i].file_size = 0;
     }
 }
 
