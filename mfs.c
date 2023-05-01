@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define BLOCK_SIZE 1024
 #define BLOCKS_PER_FILE 1024
@@ -32,6 +33,10 @@ struct directoryEntry
 struct directoryEntry *directory;
 struct inode *inodes;
 
+FILE* fp;
+char image_name[64];
+uint8_t image_open;
+
 struct inode
 {
     int32_t blocks[BLOCKS_PER_FILE];
@@ -57,15 +62,41 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 }
 void readfile(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    if (tokens[1] == NULL || tokens[2] == NULL || tokens[3] == NULL)
+    char full_path[256];
+    if (tokens[1][0] == '/')
     {
-        fprintf(stderr, "Not enough parameters\n");
+        strncpy(full_path, tokens[1], sizeof(full_path));
+    }
+    else
+    {
+        char *cwd = getcwd(NULL, 0);
+        snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
+        free(cwd);
     }
 
-    // TODO: I changed the name to match what it actually does
-    // You have to find the file in the file_system and then print the contents 
-    // out in hex
+    fp = fopen(full_path, "r");
+    if (fp == NULL)
+    {
+        perror("File opening failed");
+        return; 
+    }
 
+    long start = strtol(tokens[2], NULL, 10); 
+    long num = strtol(tokens[3], NULL, 10); 
+
+    fseek(fp, start, SEEK_SET);
+
+    for (int i = 0; i < num; i++)
+    {
+        int byte = fgetc(fp); 
+        if(byte == EOF)
+        {
+            fprintf(stderr, "Reached end of file\n"); 
+            break; 
+        }
+        printf("%02X\n", byte); 
+    }
+    // fclose(fp); 
 }
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
@@ -80,14 +111,9 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
 void df(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
+
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    if (tokens[1] == NULL)
-    {
-        fprintf(stderr, "Filename not provided\n");
-        return;
-    }
-
     char full_path[256];
     if (tokens[1][0] == '/')
     {
@@ -97,59 +123,70 @@ void openfs(char *tokens[MAX_NUM_ARGUMENTS])
     {
         char *cwd = getcwd(NULL, 0);
         snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
-        free(cwd);
+        // free(cwd);
     }
-
-    FILE *fs_file = fopen(full_path, "r");
-    if (fs_file == NULL)
+    
+    fp = fopen(full_path, "w"); //r
+    if (fp == NULL)
     {
         fprintf(stderr, "File not found\n");
         return;
     }
-    // TODO: You have to read the file into curr_image. You can just call fread
-    // with sizeof data and the filename. Basically just read sizeof(data) bytes
 
-    fclose(fs_file);
+    strncpy( image_name, full_path, strlen(full_path) );
+
+    fread( &curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp );
+
+    image_open = 1;
+    // fclose( fp );
 }
+
 void closefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if( image_open == 0 )
+    {
+        printf("ERROR: Disk image not open\n");
+        return;
+    }
+
+    fclose( fp );
+
+    image_open = 0;
+    memset( image_name, 0, 64 );
 }
+
 void createfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    if (tokens[1] == NULL)
-    {
-        fprintf(stderr, "Filename not provided\n");
-        return;
-    }
-
-    FILE *fs_file = fopen(tokens[1], "w");
-    if (fs_file == NULL)
+    fp = fopen(tokens[1], "w");
+    if (fp == NULL)
     {
         fprintf(stderr, "Failed to create file");
         return;
     }
-    fclose(fs_file);
-    printf("File system image created!\n");
-    if (tokens[1] == NULL)
-    {
-        fprintf(stderr, "Filename not provided\n");
-        return;
-    }
 
-    FILE *fs_file = fopen(tokens[1], "w");
-    if (fs_file == NULL)
-    {
-        fprintf(stderr, "Failed to create file");
-        return;
-    }
-    fclose(fs_file);
-    printf("File system image created!\n");
+    strncpy( image_name, tokens[1], strlen( tokens[1] ));
 
-    // TODO: call init to reinitialize the file system as new
+    memset( curr_image, 0, NUM_BLOCKS * BLOCK_SIZE);
+
+    image_open = 1;
+
+    // fclose(fp);
+    printf("File system image created!\n"); 
 }
+
+//saves the disk image if one is currently open
 void savefs(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    if( image_open == 0 )
+    {
+        printf("ERROR: Disk image is not open\n");
+    }
+
+    fp = fopen( image_name, "w" );
+
+    fwrite( &curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp );
 }
+
 void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
@@ -164,7 +201,7 @@ void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 #define NUM_COMMANDS 14
 
 // We use a table to store and lookup command names and their corresponding functions.
-// Essentially, this is a map/dictionary that is highly modular (compared to a massive\
+// Essentially, this is a map/dictionary that is highly modular (compared to a massive
 // switch statement). Also, if the table decides to grow larger, we can always store the
 // elements in order of their keys (the name field), and use binary search when looking up a
 // command as opposed to linearly scanning the commands table
@@ -199,10 +236,15 @@ void init(void)
     directory = (struct directoryEntry *)&curr_image[0][0];
     inodes = (struct inode *)&curr_image[20][0];
 
+    memset( image_name, 0, 64 );
+    image_open = 0;
+
     for (int i = 0; i < NUM_FILES; ++i)
     {
         directory[i].in_use = 0;
-        directory[i].inode = -1;
+        directory[i].inode  = -1;
+        memset( directory[i].filename, 0, 64 );
+
         for (int j = 0; j < BLOCKS_PER_FILE; ++j)
         {
             inodes[i].blocks[j] = -1;
@@ -269,7 +311,7 @@ int main(int argc, char **argv)
     char *command_string = (char *)malloc(MAX_COMMAND_SIZE);
     char *tokens[MAX_NUM_ARGUMENTS] = {NULL};
 
-    init();
+    init( );
 
     while (1)
     {
