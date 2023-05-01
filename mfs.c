@@ -714,6 +714,7 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
     if(encrypted_byte == NULL && byte_to_encrypt == NULL && feof(encrypt_fp))
     {
         printf("Error: There was an error encrypting the file.\n");
+        return;
     }
 
     fclose(encrypt_fp);
@@ -723,12 +724,69 @@ void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     //almost identical to encrypt, since its an XOR encryption the same function will decrypt
     //check that the filename is not null
+    char *filename = tokens[1];
+    char *cipher = tokens[2];
+    
+    if(!image_open)
+    {
+        printf("Error: Disk Image not open.\n");
+        return;
+    }
+    //check that the filename is not null
+    if(filename == NULL)
+    {
+        printf("Error: file not found.\n");
+        return;
+    }
+    
     //check that the file exists
+    FILE *decrypt_fp = fopen(filename, "r+");
+    if(!decrypt_fp)
+    {
+        printf("Error: Could not open file.\n");
+        return;
+    }
     //check that the file is not empty
+    if(feof(decrypt_fp))
+    {
+        printf("Error: file empty, nothing to decrypt.\n");
+        return;
+    }
     //check that the cypher is not NULL
-    //check that the cypher is the right size
-    //open the file and XOR 256 byte sized blocks with the cypher respectively
+    if(cipher == NULL)
+    {
+        printf("Error: Cipher is NULL.\n");
+        return;
+    }
+    //check that the cypher is the rihgt size
+    if(sizeof(cipher) != CIPHER_SIZE)
+    {
+        printf("Error: Cipher must be 256 bits.\n");
+        return;
+    }
+    //open the file XOR 256 byte sized blocks with the cypher, respectively
+    char *encrypted_byte;
+    char *decrypted_byte;
+    int32_t encrypt_offset = 0;
+
+    while(!feof(decrypt_fp))
+    {
+        fseek(decrypt_fp, encrypt_offset, SEEK_SET);
+        fread(encrypted_byte, CIPHER_SIZE, 1, decrypt_fp);
+        decrypted_byte = (int)encrypted_byte ^ (int)cipher;
+
+        fwrite(encrypted_byte, 256, 1, decrypt_fp);
+
+        encrypt_offset += CIPHER_SIZE + 1;
+    }
     //check that the file is not empty/NULL
+    if(encrypted_byte == NULL && decrypted_byte == NULL && feof(decrypt_fp))
+    {
+        printf("Error: There was an error encrypting the file.\n");
+        return;
+    }
+
+    fclose(decrypt_fp);
 }
 
 void init()
