@@ -1,5 +1,6 @@
 #define _GNU_SOURCE 1
 
+#include <assert.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -157,20 +158,20 @@ int32_t findFreeInodeBlock(int32_t inode)
     return -1;
 }
 
-bool find_file_by_name(char *name)
+uint32_t find_file_by_name(char *name)
 {
-    bool found = false;
+    uint32_t inode_num = -1;
 
     for (int i = 0; i < NUM_FILES; ++i)
     {
         if (directory[i].in_use && !strncmp(name, directory[i].filename, 64))
         {
-            found = true;
+            inode_num = directory[i].inode;
             break;
         }
     }
 
-    return found;
+    return inode_num;
 }
 
 void insert(char *tokens[MAX_NUM_ARGUMENTS])
@@ -283,9 +284,49 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     }
     fclose(input_fp);
 }
+
 void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    char *src = tokens[1];
+    char *dst = tokens[2] ? tokens[2] : src;
+
+    uint32_t inode;
+
+    if ((inode = find_file_by_name(src)) == -1)
+    {
+        fprintf(stderr, "retrieve: Error: File not found\n");
+        return;
+    }
+
+    FILE *temp = fopen(dst, "w");
+
+    if (!temp)
+    {
+        fprintf(stderr, "retrieve: Error: Could not open file `%s' for reading\n", dst);
+        return;
+    }
+
+    struct inode this = inodes[inode];
+    uint32_t rem = this.file_size;
+
+    int i = 0;
+    while (rem > 0)
+    {
+        uint32_t  to_copy = BLOCK_SIZE;
+
+        if (rem < BLOCK_SIZE)
+            to_copy = rem;
+
+        assert(i < BLOCKS_PER_FILE);
+
+        fwrite(curr_image[this.blocks[i++]], 1, to_copy, temp);
+        
+        rem -= BLOCK_SIZE;
+    }
+
+    fclose(temp);
 }
+
 void readfile(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char full_path[256];
@@ -311,12 +352,15 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
     // You have to find the file in the file_system and then print the contents
     // out in hex
 }
+
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
+
 void undel(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
+
 void list(char *tokens[MAX_NUM_ARGUMENTS])
 {
     bool empty = true;
@@ -378,6 +422,7 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
         printf("list: No files found.\n");
     }
 }
+
 void df(char *tokens[MAX_NUM_ARGUMENTS])
 {
     int j;
@@ -469,11 +514,81 @@ void savefs(char *tokens[MAX_NUM_ARGUMENTS])
 
 void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    
+    uint8_t mask = 0;
+
+    char *file = NULL;
+
+    // Parse options
+    for (int i = 1; i < MAX_NUM_ARGUMENTS && tokens[i] != NULL; ++i)
+    {
+        char flag = *tokens[i];
+        if (flag == '-' || flag == '+')
+        {
+            char opt = tokens[i][1];
+            switch (opt)
+            {
+            case 'h':
+                mask |= flag == '-' ? ~(ATTRIB_HIDDEN) : ATTRIB_HIDDEN;
+                break;
+            case 'r':
+                mask |= flag == '-' ? ~(ATTRIB_R_ONLY) : ATTRIB_R_ONLY;
+                break;
+            case '\0':
+                fprintf(stderr, "list: ERROR: missing attribute paramter ('h' or 'r')\n");
+                break;
+            default:
+                fprintf(stderr, "list: unrecognized attribute %c\n", opt);
+            }
+        }
+        else
+        {
+            file = tokens[i];
+        }
+    }
+
+    if (file == NULL)
+    {
+        printf("attrib: Filename not provided\n");
+        return;
+    }
+
+    uint32_t inode;
+
+    if ((inode = find_file_by_name(file)) == -1)
+    {
+        fprintf(stderr, "attrib: File not found\n");
+        return;
+    }
+
+    // Upper 6 bits are set (attribute wants to be removed)
+    if (mask & ~(ATTRIB_HIDDEN | ATTRIB_R_ONLY))
+    {
+        if (mask & ATTRIB_HIDDEN)
+        {
+            fprintf(stderr, "attrib: ERROR: cannot combine both -h and +h options\n");
+            return;
+        }
+        else if (mask & ATTRIB_R_ONLY)
+        {
+            fprintf(stderr, "attrib: ERROR: cannot combine both -r and +r options\n");
+            return;
+        }
+
+        // Clear the attribute
+        inodes[inode].attribute &= mask;
+    }
+    else
+    {
+        // Set the attribute
+        inodes[inode].attribute |= mask;
+    }
 }
+
+
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
+
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
