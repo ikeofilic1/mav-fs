@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <unistd.h>
 
 #define BLOCK_SIZE 1024
 #define BLOCKS_PER_FILE 1024
@@ -384,9 +385,13 @@ void df(char *tokens[MAX_NUM_ARGUMENTS])
     int count = 0;
     for (j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
     {
-        if (free_blocks[j])
+        if(free_blocks[j])
         {
-            count++;
+        not_found = 0;
+        char filename[65];
+        memset( filename, 0, 65 );
+        strncpy( filename, directory[i].filename, strlen( directory[i].filename ));
+        printf("%s\n", filename);
         }
     }
     size_avail = count * BLOCK_SIZE;
