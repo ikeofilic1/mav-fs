@@ -29,50 +29,37 @@
 #define ATTRIB_HIDDEN 0x1
 #define ATTRIB_R_ONLY 0x2
 
+///////////////////////////////////////
+// Forward declarations
+//////////////////////////////////////
+void init(void);
+void parse_tokens(const char *command_string, char **token);
+void free_array(char **arr, size_t size);
+void insert(char *tokens[MAX_NUM_ARGUMENTS]);
+void retrieve(char *tokens[MAX_NUM_ARGUMENTS]);
+void readfile(char *tokens[MAX_NUM_ARGUMENTS]);
+void del(char *tokens[MAX_NUM_ARGUMENTS]);
+void undel(char *tokens[MAX_NUM_ARGUMENTS]);
+void list(char *tokens[MAX_NUM_ARGUMENTS]);
+void openfs(char *tokens[MAX_NUM_ARGUMENTS]);
+void closefs(char *tokens[MAX_NUM_ARGUMENTS]);
+void createfs(char *tokens[MAX_NUM_ARGUMENTS]);
+void savefs(char *tokens[MAX_NUM_ARGUMENTS]);
+void attrib(char *tokens[MAX_NUM_ARGUMENTS]);
+void encrypt(char *tokens[MAX_NUM_ARGUMENTS]);
+void decrypt(char *tokens[MAX_NUM_ARGUMENTS]);
+void df(char *tokens[MAX_NUM_ARGUMENTS]);
+
+FILE *fp;
+
 uint8_t curr_image[NUM_BLOCKS][BLOCK_SIZE];
+
 uint8_t *free_blocks;
 uint8_t *free_inodes;
 
 uint32_t size_avail;
-
-int32_t findFreeBlock()
-{
-    int i;
-    for(i = 0; i < NUM_BLOCKS; i++)
-    {
-        if(free_inodes[i])
-        {
-            return i+1001;
-        }
-    }
-    return -1;
-}
-
-int32_t findFreeInode()
-{
-    int i;
-    for(i = 0; i < NUM_FILES; i++)
-    {
-        if(free_inodes[i])
-        {
-            return i;
-        }
-    }
-    return -1;
-}
-
-int32_t findFreeInodeBlock(int32_t inode)
-{
-    int i;
-    for(i = 0; i < BLOCKS_PER_FILE; i++)
-    {
-        if(inodes[inode].blocks[i] == -1)
-        {
-            return i;
-        }
-    }
-    return -1;
-}
+uint8_t image_open;
+char image_name[64];
 
 struct directoryEntry
 {
@@ -81,21 +68,16 @@ struct directoryEntry
     int32_t inode;
 };
 
-struct directoryEntry *directory;
-
-FILE *fp;
-char image_name[64];
-uint8_t image_open;
-
 struct inode
 {
-    int32_t  blocks[BLOCKS_PER_FILE];
-    bool     in_use;
-    uint8_t  attribute;
-    uint32_t file_size;  
+    int32_t blocks[BLOCKS_PER_FILE];
+    bool in_use;
+    uint8_t attribute;
+    uint32_t file_size;
 };
 
 struct inode *inodes;
+struct directoryEntry *directory;
 
 // Command stuff
 typedef void (*command_fn)(char *[MAX_NUM_ARGUMENTS]);
@@ -107,6 +89,35 @@ typedef struct _command
     uint8_t num_args;
 } command;
 
+// As of now, we only have 14 commands
+#define NUM_COMMANDS 14
+
+// We use a table to store and lookup command names and their corresponding functions.
+// Essentially, this is a map/dictionary that is highly modular (compared to a massive
+// switch statement). Also, if the table decides to grow larger, we can always store the
+// elements in order of their keys (the name field), and use binary search when looking up a
+// command as opposed to linearly scanning the commands table
+
+static const command commands[NUM_COMMANDS] = {
+    //  command name	call back	min arguments
+
+    {"insert", insert, 1},
+    {"retrieve", retrieve, 2},
+    {"read", readfile, 3},
+    {"delete", del, 1},
+    {"undel", undel, 1},
+    {"list", list, 0},
+    {"df", df, 0},
+    {"open", openfs, 1},
+    {"close", closefs, 0},
+    {"createfs", createfs, 1},
+    {"savefs", savefs, 0},
+    {"attrib", attrib, 1},
+    {"encrypt", encrypt, 2},
+    {"decrypt", decrypt, 2},
+};
+// End of command stuff
+
 int32_t findFreeBlock()
 {
     int i;
@@ -114,7 +125,7 @@ int32_t findFreeBlock()
     {
         if (free_inodes[i])
         {
-            return i + 790;
+            return i + 1001;
         }
     }
     return -1;
@@ -162,28 +173,6 @@ bool find_file_by_name(char *name)
     return found;
 }
 
-void init(void)
-{
-    directory = (struct directoryEntry *)&curr_image[0][0];
-    inodes = (struct inode *)&curr_image[20][0];
-
-    memset(image_name, 0, 64);
-    image_open = 0;
-
-    for (int i = 0; i < NUM_FILES; ++i)
-    {
-        directory[i].in_use = 0;
-        directory[i].inode = -1;
-        memset(directory[i].filename, 0, 64);
-
-        for (int j = 0; j < BLOCKS_PER_FILE; ++j)
-        {
-            inodes[i].blocks[j] = -1;
-        }
-        inodes[i].in_use = 0;
-    }
-}
-
 void insert(char *tokens[MAX_NUM_ARGUMENTS])
 {
     //////////////////////////////////////////
@@ -207,8 +196,8 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    //verify that there is enough space
-    if(buf.st_size > size_avail)
+    // verify that there is enough space
+    if (buf.st_size > size_avail)
     {
         printf("Error: there is not enough space available for a file of this size.\n");
     }
@@ -256,8 +245,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
 
     inodes[inode_index].file_size = buf.st_size;
 
-
-    while(copy_size > 0)
+    while (copy_size > 0)
     {
         fseek(input_fp, offset, SEEK_SET);
 
@@ -401,7 +389,7 @@ void df(char *tokens[MAX_NUM_ARGUMENTS])
             count++;
         }
     }
-    size_avail =  count * BLOCK_SIZE;
+    size_avail = count * BLOCK_SIZE;
 }
 
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
@@ -459,13 +447,12 @@ void createfs(char *tokens[MAX_NUM_ARGUMENTS])
 
     strncpy(image_name, tokens[1], strlen(tokens[1]));
 
-    memset(curr_image, 0, NUM_BLOCKS * BLOCK_SIZE);
-
-    image_open = 1;
-
     // fclose(fp);
     printf("File system image created!\n");
+
     init();
+
+    image_open = 1;
 }
 
 // saves the disk image if one is currently open
@@ -474,15 +461,15 @@ void savefs(char *tokens[MAX_NUM_ARGUMENTS])
     if (image_open == 0)
     {
         printf("ERROR: Disk image is not open\n");
+        return;
     }
 
-    fp = fopen(image_name, "w");
-
-    fwrite(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
+    fwrite(curr_image, BLOCK_SIZE, NUM_BLOCKS, fp);
 }
 
 void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 {
+    
 }
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
@@ -491,52 +478,22 @@ void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
 }
 
-// As of now, we only have 14 commands
-#define NUM_COMMANDS 14
-
-// We use a table to store and lookup command names and their corresponding functions.
-// Essentially, this is a map/dictionary that is highly modular (compared to a massive
-// switch statement). Also, if the table decides to grow larger, we can always store the
-// elements in order of their keys (the name field), and use binary search when looking up a
-// command as opposed to linearly scanning the commands table
-
-static const command commands[NUM_COMMANDS] = {
-    //  command name	call back	min arguments
-
-    {"insert", insert, 1},
-    {"retrieve", retrieve, 2},
-    {"read", readfile, 3},
-    {"delete", del, 1},
-    {"undel", undel, 1},
-    {"list", list, 0},
-    {"df", df, 0},
-    {"open", openfs, 1},
-    {"close", closefs, 0},
-    {"createfs", createfs, 1},
-    {"savefs", savefs, 0},
-    {"attrib", attrib, 1},
-    {"encrypt", encrypt, 2},
-    {"decrypt", decrypt, 2},
-};
-
-///////////////////////////////////////
-// Forward declarations
-//////////////////////////////////////
-void parse_tokens(const char *command_string, char **token);
-void free_array(char **arr, size_t size);
-
 void init()
 {
     directory = (struct directoryEntry *)&curr_image[0][0];
     inodes = (struct inode *)&curr_image[20][0];
-
     free_blocks = (uint8_t *)&curr_image[1000][0];
     free_inodes = (uint8_t *)&curr_image[19][0];
+
+    memset(image_name, 0, 64);
+    image_open = 0;
 
     for (int i = 0; i < NUM_FILES; ++i)
     {
         directory[i].in_use = 0;
         directory[i].inode = -1;
+        memset(directory[i].filename, 0, 64);
+
         for (int j = 0; j < BLOCKS_PER_FILE; ++j)
         {
             inodes[i].blocks[j] = -1;
@@ -546,70 +503,6 @@ void init()
         }
         inodes[i].in_use = 0;
     }
-}
-
-int main(int argc, char **argv)
-{
-    char *command_string = (char *)malloc(MAX_COMMAND_SIZE);
-    char *tokens[MAX_NUM_ARGUMENTS] = {NULL};
-
-    int i;
-
-    init();
-
-    while (1)
-    {
-        // Print out the msh prompt
-        printf("mfs> ");
-
-        // Read the command from the commandline.  The
-        // maximum command that will be read is MAX_COMMAND_SIZE
-        // This while command will wait here until the user
-        // inputs something since fgets returns NULL when there
-        // is no input
-        while (!fgets(command_string, MAX_COMMAND_SIZE, stdin))
-            ;
-
-        // Ignore blank lines
-        if (*command_string == '\n')
-        {
-            continue;
-        }
-
-        parse_tokens(command_string, tokens);
-
-        char *cmd = tokens[0];
-
-        // Quit if command is 'quit' or 'exit'
-        if (!strcmp(cmd, "quit") || !strcmp(cmd, "exit"))
-        {
-            break;
-        }
-
-        for (i = 0; i < NUM_COMMANDS; ++i)
-        {
-            if (! strcmp(cmd, commands[i].name))
-            {
-                if (tokens[commands[i].num_args] == NULL)
-                {
-                    fprintf(stderr, "%s: Not enough arguments\n", cmd);
-                    break;
-                }
-                commands[i].run(tokens);
-                break;
-            }
-        }
-
-        if (i == NUM_COMMANDS)
-        {
-            fprintf(stderr, "%s: Invalid command `%s'\n", argv[0], cmd);
-        }
-    }
-
-    free(command_string);
-    free_array(tokens, MAX_NUM_ARGUMENTS);
-
-    return 0;
 }
 
 void free_array(char **arr, size_t size)
