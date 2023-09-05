@@ -9,7 +9,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <unistd.h>
 
 #define BLOCK_SIZE 1024
 #define BLOCKS_PER_FILE 1024
@@ -20,8 +19,9 @@
 #define FIRST_DATA_BLOCK 341
 
 #define DISK_IMAGE_SIZE 67108864
-#define NUM_BLOCKS (DISK_IMAGE_SIZE) / (BLOCK_SIZE)
-#define MAX_FILE_SIZE 1048576
+#define NUM_BLOCKS (DISK_IMAGE_SIZE / BLOCK_SIZE)
+#define MAX_FILE_SIZE (BLOCK_SIZE * BLOCKS_PER_FILE)
+#define USABLE_SIZE ((NUM_BLOCKS - (FIRST_DATA_BLOCK - 1)) * 1024)
 
 // No command has more than 5 arguments in our
 // list of commands
@@ -54,8 +54,6 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS]);
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS]);
 void df(char *tokens[MAX_NUM_ARGUMENTS]);
 
-FILE *fp = NULL;
-
 uint8_t curr_image[NUM_BLOCKS][BLOCK_SIZE];
 
 uint8_t *free_blocks;
@@ -67,7 +65,7 @@ char image_name[256];
 
 struct directoryEntry
 {
-    char filename[64];
+    char filename[MAX_FILE_LEN];
     bool in_use;
     int32_t inode;
 };
@@ -103,12 +101,12 @@ typedef struct _command
 // command as opposed to linearly scanning the commands table
 
 static const command commands[NUM_COMMANDS] = {
-    //  command name	call back	min arguments
+    //  cmd name	call back	min arguments
 
     {"insert", insert, 1},
     {"retrieve", retrieve, 1},
     {"read", readfile, 3},
-    {"delete", del, 1},
+    {"del", del, 1},
     {"undel", undel, 1},
     {"list", list, 0},
     {"df", df, 0},
@@ -152,17 +150,17 @@ int32_t findFreeInode()
     return -1;
 }
 
-int32_t findFreeInodeBlock(int32_t inode)
+int32_t findFreeDirectory()
 {
     int i;
-    for (i = 0; i < BLOCKS_PER_FILE; i++)
+    for (i = 0; i < NUM_FILES; ++i)
     {
-        if (inodes[inode].blocks[i] == -1)
+        if (directory[i].in_use == 0) // we found one
         {
             return i;
         }
     }
-    return -1;
+    return -1; // All spots in the directory are taken
 }
 
 int32_t find_file_by_name(char *name, uint8_t *dir)
@@ -185,24 +183,11 @@ int32_t find_file_by_name(char *name, uint8_t *dir)
     return inode_num;
 }
 
-void _set_size_avail(void)
-{
-    uint32_t count = 0;
-    for (int j = FIRST_DATA_BLOCK; j < NUM_BLOCKS; j++)
-    {
-        if (free_blocks[j])
-        {
-            count++;
-        }
-    }
-
-    size_avail = count * BLOCK_SIZE;
-}
-
 void xor_file(uint32_t inode, uint8_t cipher)
 {
     int block_idx = 0;
 
+    // Go through each block that this file uses
     while (block_idx < BLOCKS_PER_FILE)
     {
         uint32_t block_num = inodes[inode].blocks[block_idx];
@@ -211,10 +196,10 @@ void xor_file(uint32_t inode, uint8_t cipher)
         if (block_num == -1)
             break;
 
-        // XOR each block
+        // XOR the block
         for (int i = 0; i < BLOCK_SIZE; ++i)
         {
-            curr_image[inodes[inode].blocks[block_idx]][i] ^= cipher;
+            curr_image[block_num][i] ^= cipher;
         }
 
         block_idx++;
@@ -250,7 +235,7 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    // verify the file exists
+    // verify the file exists on host disk
     struct stat buf;
     int ret = stat(filename, &buf);
     if (ret == -1)
@@ -258,18 +243,13 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         printf("ERROR: file does not exist.\n");
         return;
     }
-
     // verify that the file isn't too big
     if (buf.st_size > MAX_FILE_SIZE)
     {
         printf("ERROR: file exceeds maximum size.\n");
         return;
     }
-
-    _set_size_avail();
-
     // verify that there is enough space
-    // size_avail is updated above
     if (buf.st_size > size_avail)
     {
         printf("ERROR: there is not enough space for a file of this size.\n");
@@ -277,35 +257,13 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
     }
 
     // find an empty directory entry
-    int i;
-    int directory_entry = -1; // initially -1 until we find a valid one
-    for (i = 0; i < NUM_FILES; i++)
-    {
-        if (directory[i].in_use == 0) // then we found one!
-        {
-            directory_entry = i;
-            break;
-        }
-    }
+    int directory_entry = findFreeDirectory();
     if (directory_entry == -1) // then we never found a valid one :(
     {
         printf("ERROR: no empty directory entry found.\n");
         return;
     }
-
-    // open the input file read-only
-    FILE *input_fp = fopen(filename, "r");
-    printf("Reading %d bytes from %s.\n", (int)buf.st_size, filename);
-
-    // Save off the size of the input file
-    // and initialize index variables to zero
-    int32_t copy_size = buf.st_size;
-
-    int32_t offset = 0;
-
-    int32_t block_index = 0;
-
-    // find free inode
+    // Find an unused inode
     int32_t inode_index = findFreeInode();
     if (inode_index == -1)
     {
@@ -313,7 +271,18 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    // place into directory
+    // Save off the size of the input file
+    // and initialize index variables to zero
+    int32_t copy_size = buf.st_size;
+    int32_t offset = 0;
+    int32_t block_index = 0;
+    int32_t inode_block = 0;
+
+    // open the input file read-only
+    FILE *input_fp = fopen(filename, "r");
+    printf("Reading %d bytes from %s.\n", (int)buf.st_size, filename);
+
+    // "place" into directory
     directory[directory_entry].in_use = 1;
     directory[directory_entry].inode = inode_index;
     strncpy(directory[directory_entry].filename, base, strlen(base));
@@ -337,11 +306,14 @@ void insert(char *tokens[MAX_NUM_ARGUMENTS])
         int32_t bytes = fread(curr_image[block_index], BLOCK_SIZE, 1, input_fp);
 
         // save the block in the inode
-        int32_t inode_block = findFreeInodeBlock(inode_index);
+        if (inode_block == BLOCKS_PER_FILE)
+        {
+        }
         inodes[inode_index].blocks[inode_block] = block_index;
 
         if (bytes == 0 && !feof(input_fp))
         {
+            free_inodes[inode_index] = 1; // It is now free again
             printf("ERROR: An error occurred while trying to read from the input file.\n");
             return;
         }
@@ -406,8 +378,8 @@ void retrieve(char *tokens[MAX_NUM_ARGUMENTS])
     fclose(temp);
 }
 
-//Read a file from virtual file system and output it to the terminal
-//as a Hexadecimal value
+// Read a file from virtual file system and output it to the terminal
+// as a Hexadecimal value
 void readfile(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -424,57 +396,102 @@ void readfile(char *tokens[MAX_NUM_ARGUMENTS])
     }
 
     struct inode this = inodes[inode];
+    if (!this.file_size)
+    {
+        printf("read: File is empty\n");
+        return;
+    }
+
     uint32_t pos = atoi(tokens[2]);
+    if (pos > this.file_size)
+    {
+        printf("read: file is only %d bytes", this.file_size);
+        return;
+    }
 
     int i = pos / BLOCK_SIZE;
     uint16_t offset = pos % BLOCK_SIZE;
+    int32_t to_print = atoi(tokens[3]);
 
-    if (this.file_size)
+    // Help the user a bit since we don't really expect
+    // them to know how long the file is
+    if (to_print + pos > this.file_size)
+        to_print = this.file_size - pos;
+
+    bool remain = to_print % BLOCK_SIZE; // will the last line have its ascii not printed?
+
+    int m = pos & 0xF;
+    pos = pos & ~0xF;
+
+    // Print the first header
+    printf("%06X: ", pos);
+    for (int j = 0; j < m; ++j)
+        printf("-- ");
+
+    // TODO:
+    // 1. Change the entire thing to a three step process
+    // 2. First line -> middle lines -> last line (if it has less than 16 bytes)
+    // 3. Remove remain and offset variables
+
+    while (to_print > 0 && i < BLOCKS_PER_FILE && this.blocks[i] != -1)
     {
-        int32_t print = atoi(tokens[3]);
+        uint32_t end = to_print;
 
-        if (print + pos > this.file_size)
-            print = this.file_size - pos;
+        if (end > BLOCK_SIZE)
+            end = BLOCK_SIZE;
 
-        printf("Reading from %d to %d", pos, print);
+        uint8_t *this_blk = curr_image[this.blocks[i]];
 
-        while (print > 0 && i < BLOCKS_PER_FILE && this.blocks[i] != -1)
+        for (int j = offset; j < (end + offset); ++j)
         {
-            uint32_t end = print;
+            // Some fancy printing
+            printf("%02X ", this_blk[j]);
 
-            if (end > BLOCK_SIZE)
-                end = BLOCK_SIZE;
-
-            uint8_t *this_blk = curr_image[this.blocks[i]];
-
-            for (int j = offset; j < end; ++j)
+            // Print the ascii representation of the previous 16 bytes
+            if ((j & 0xF) == 0xF)
             {
-                // Some fancy printing
-                if ((j & 0xF) == 0)
+                int start = j - 15;
+                if (offset > start)
+                    start = offset;
+                printf("  ");
+
+                putchar('|');
                 {
-                    printf("\n%06X: ", pos);
-                    pos += 16;
+                    for (int k = start; k <= j; ++k)
+                    {
+                        char byte = this_blk[k];
+                        if (byte >= 32 && byte < 127) // It is printable
+                        {
+                            putchar(byte);
+                        }
+                        else
+                            putchar('.');
+                    }
                 }
-                printf("%02X ", this_blk[j]);
+                putchar('|');
+
+                // print next line header
+                pos += 16;
+                printf("\n%06X: ", pos);
             }
-
-            offset = 0;
-            print -= BLOCK_SIZE;
-
-            ++i;
         }
 
-        printf("\n");
+        offset = 0;
+        to_print -= BLOCK_SIZE;
+
+        ++i;
     }
-    else
+
+    offset = pos % BLOCK_SIZE;
+    if (remain)
     {
-        printf("read: File is empty\n");
     }
+
+    printf("\n");
 }
 
-
-//Delete a file from the file system using call 'delete
-//An error occurs if a read-only file is marked for deletion
+// Delete a file from the file system using call 'delete
+// An error occurs if a read-only file is marked for deletion
 void del(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -492,7 +509,7 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    if( inodes[dir_idx].attribute & ATTRIB_R_ONLY )
+    if (inodes[dir_idx].attribute & ATTRIB_R_ONLY)
     {
         printf("delete: ERROR: Can not delete read-only files.\n");
         return;
@@ -514,7 +531,7 @@ void del(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
-//undelete a previously deleted file using call 'undel'
+// undelete a previously deleted file using call 'undel'
 void undel(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -587,10 +604,10 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
                 list_attrib = true;
                 break;
             case '\0':
-                fprintf(stderr, "list: ERROR: missing option parameter");
+                fprintf(stderr, "list: ERROR: missing option parameter\n");
                 break;
             default:
-                fprintf(stderr, "list: unrecognized option %c", opt);
+                fprintf(stderr, "list: unrecognized option %c\n", opt);
             }
         }
     }
@@ -633,7 +650,7 @@ void list(char *tokens[MAX_NUM_ARGUMENTS])
 }
 
 // Outputs the amount of free space left on the disk image
-// updates global size variable
+// using global size variable
 void df(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -642,7 +659,6 @@ void df(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    _set_size_avail();
     printf("%d bytes free.\n", size_avail);
 }
 
@@ -651,33 +667,25 @@ void df(char *tokens[MAX_NUM_ARGUMENTS])
 // set the image to open
 void openfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    char full_path[256];
-    if (tokens[1][0] == '/')
+    int max_size = sizeof(image_name) - 1;
+    if (strlen(tokens[1]) > max_size)
     {
-        strncpy(full_path, tokens[1], sizeof(full_path));
-    }
-    else
-    {
-        char *cwd = getcwd(NULL, 0);
-        snprintf(full_path, sizeof(full_path), "%s/%s", cwd, tokens[1]);
-        free(cwd);
+        fprintf(stderr, "Image name should not be longer than %d characters\n", max_size);
     }
 
-    fp = fopen(full_path, "r+"); // rw
+    FILE *fp = fopen(tokens[1], "r");
     if (fp == NULL)
     {
-        fprintf(stderr, "File not found\n");
+        fprintf(stderr, "Error opening file\n");
         return;
     }
 
-    strncpy(image_name, full_path, sizeof(image_name) - 1);
-
-    rewind(fp);
+    strncpy(image_name, tokens[1], max_size);
     int read = fread(&curr_image[0][0], BLOCK_SIZE, NUM_BLOCKS, fp);
-
     printf("Read %d blocks from %s\n", read, tokens[1]);
 
     image_open = 1;
+    fclose(fp);
 }
 
 // closes disk image if it is open
@@ -689,29 +697,32 @@ void closefs(char *tokens[MAX_NUM_ARGUMENTS])
         return;
     }
 
-    if (fp)
-    {
-        fclose(fp);
-        fp = NULL;
-    }
-
     image_open = 0;
-    memset(image_name, 0, 64);
+    memset(image_name, 0, sizeof(image_name));
 }
 
 // create a new disk image and initialize it
 void createfs(char *tokens[MAX_NUM_ARGUMENTS])
 {
-    fp = fopen(tokens[1], "w");
+    int n = strlen(tokens[1]);
+    if (n >= sizeof(image_name))
+    {
+        fprintf(stderr, "Image name too long");
+    }
+
+    // We do this "test run" to check if we can actually write a file
+    // with this name in this directory so the user will not be stranded
+    // later when calling `savefs`
+    FILE *fp = fopen(tokens[1], "w");
     if (fp == NULL)
     {
         fprintf(stderr, "Failed to create file");
         return;
     }
+    fclose(fp);
 
     init();
-
-    strncpy(image_name, tokens[1], strlen(tokens[1]));
+    strncpy(image_name, tokens[1], n);
 
     printf("File system image created!\n");
     image_open = 1;
@@ -725,26 +736,32 @@ void savefs(char *tokens[MAX_NUM_ARGUMENTS])
         printf("ERROR: Disk image is not open\n");
         return;
     }
+    char *name = image_name;
 
-    assert(fp != NULL);
+    // If they provide a new name
+    if (tokens[1] != NULL)
+        name = tokens[1];
 
-    rewind(fp);
+    FILE *fp = fopen(name, "w");
+    if (fp == NULL)
+        fprintf(stderr, "savefs: fatal error: could not open file for writing");
+
     int blocks_wrote = fwrite(curr_image, BLOCK_SIZE, NUM_BLOCKS, fp);
 
     if (blocks_wrote == 0 && !feof(fp))
-    {
         fprintf(stderr, "Error, could not write disk image to file\n");
-    }
     else
-        printf("Wrote %d blocks to %s\n", blocks_wrote, image_name);
+        printf("Wrote %d blocks to %s\n", blocks_wrote, name);
+
+    fclose(fp);
 }
 
-//add and remove attributes to files in the disk image
-//options are +h,+r to add the 'hidden' and 'read-only' 
-//attributes, respectively
+// add and remove attributes to files in the disk image
+// options are +h,+r to add the 'hidden' and 'read-only'
+// attributes, respectively
 //-h and -r are used to remove them
-//Hidden files can only be seen when list -h is invoked
-//Read only files can not be deleted
+// Hidden files can only be seen when list -h is invoked
+// Read only files can not be deleted
 void attrib(char *tokens[MAX_NUM_ARGUMENTS])
 {
     if (!image_open)
@@ -754,9 +771,9 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
     }
 
     char *file = tokens[2];
-    if(file == NULL)
+    if (file == NULL)
     {
-        printf("attrob: ERROR: File name was not read.\n");
+        printf("attrib: ERROR: File name was not read.\n");
         return;
     }
     uint32_t inode;
@@ -807,8 +824,7 @@ void attrib(char *tokens[MAX_NUM_ARGUMENTS])
     }
 }
 
-
-//Encrypt a file using a 256 bit cypher
+// Encrypt a file using a 256 bit cypher
 void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     char *filename = tokens[1];
@@ -830,18 +846,18 @@ void encrypt(char *tokens[MAX_NUM_ARGUMENTS])
     xor_file(inode, cipher);
 }
 
-//Decrypt encypted cypher
+// Decrypt encypted cypher
 void decrypt(char *tokens[MAX_NUM_ARGUMENTS])
 {
     // Beauty of XOR ciphers
     encrypt(tokens);
 }
 
-//Initialize the disk image with starting parameters
-//The directory takes the blocks 0-18
-//Block 19 belongs to the free inodes map
-//Blocks 20-277 are reserved for the inodes
-//The rest of the blocks are free blocks to be used by the virtual file system
+// Initialize the disk image with starting parameters
+// The directory takes the blocks 0-18
+// Block 19 belongs to the free inodes map
+// Blocks 20-277 are reserved for the inodes
+// The rest of the blocks are free blocks to be used by the virtual file system
 void init()
 {
     directory = (struct directoryEntry *)&curr_image[0][0];
@@ -991,9 +1007,5 @@ int main(int argc, char **argv)
 
     free(command_string);
     free_array(tokens, MAX_NUM_ARGUMENTS);
-
-    if (fp)
-        fclose(fp);
-
     return 0;
 }
